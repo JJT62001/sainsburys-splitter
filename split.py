@@ -90,7 +90,7 @@ if uploaded_file:
                 st.error(f"Error analyzing receipt: {e}")
 
 # ==============================
-# Edit + Add Items Section
+# Main App Section
 # ==============================
 if "receipt_items" in st.session_state:
 
@@ -123,7 +123,7 @@ if "receipt_items" in st.session_state:
     st.session_state.receipt_items = updated_items
 
     # ==============================
-    # Add New Item
+    # Add Missing Item
     # ==============================
     st.markdown("### ➕ Add Missing Item")
 
@@ -139,6 +139,35 @@ if "receipt_items" in st.session_state:
             st.rerun()
         else:
             st.warning("Please enter an item name.")
+
+    # ==============================
+    # Receipt Total Checker
+    # ==============================
+    st.divider()
+    st.subheader("Receipt Total Check")
+
+    ai_total = sum(float(item["price"]) for item in st.session_state.receipt_items)
+
+    col1, col2 = st.columns(2)
+
+    actual_total = col1.number_input(
+        "Enter Actual Receipt Total (£)",
+        min_value=0.0,
+        step=0.01
+    )
+
+    col2.metric("AI Parsed Total (£)", f"{ai_total:.2f}")
+
+    if actual_total > 0:
+        difference = round(actual_total - ai_total, 2)
+
+        if abs(difference) < 0.01:
+            st.success("✅ Totals match perfectly!")
+        else:
+            if difference > 0:
+                st.error(f"⚠ AI total is £{difference:.2f} LOWER than receipt.")
+            else:
+                st.error(f"⚠ AI total is £{abs(difference):.2f} HIGHER than receipt.")
 
     # ==============================
     # Discount Options
@@ -210,7 +239,7 @@ if "receipt_items" in st.session_state:
             if apply_15:
                 price *= 0.85
 
-            # Apply additional discount
+            # Apply extra discount
             if extra_discount > 0:
                 price *= (1 - extra_discount / 100)
 
