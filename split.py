@@ -302,22 +302,22 @@ if "receipt_items" in st.session_state:
     payer = st.radio("Select payer", PEOPLE, horizontal=True, label_visibility="collapsed")
 
     if st.button("✅ Finalise Split", type="primary"):
-        final_totals = {p: 0 for p in PEOPLE}
+        # Accumulate exact (float) share per person, round once at the end
+        # This avoids penny errors compounding across 20-30 items
+        exact_totals = {p: 0.0 for p in PEOPLE}
 
         for item in st.session_state.receipt_items:
-            item_id   = item["id"]
-            split     = st.session_state.assignments.get(item_id, [])
+            item_id = item["id"]
+            split   = st.session_state.assignments.get(item_id, [])
             if not split:
                 continue
-            price     = discounted_price(float(item["price"]), apply_15, extra_discount)
-            pennies   = round(price * 100)
-            share     = pennies // len(split)
-            remainder = pennies % len(split)
+            price = discounted_price(float(item["price"]), apply_15, extra_discount)
+            share = price / len(split)
             for person in split:
-                final_totals[person] += share
-            if remainder > 0:
-                for winner in random.sample(split, k=remainder):
-                    final_totals[winner] += 1
+                exact_totals[person] += share
+
+        # Round to pence at the very end
+        final_totals = {p: round(v * 100) for p, v in exact_totals.items()}
 
         st.session_state.final_totals = final_totals
         st.session_state.payer        = payer
