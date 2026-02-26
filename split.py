@@ -3,6 +3,8 @@ from google import genai
 from PIL import Image
 import json
 import random
+import requests
+from datetime import date
 
 # ==============================
 # Setup Gemini Client (Secure)
@@ -38,6 +40,51 @@ def discounted_price(price: float, apply_15: bool, extra_discount: float) -> flo
         p *= (1 - extra_discount / 100)
     return p
 
+
+
+# ==============================
+# Splitwise Helper
+# ==============================
+def create_splitwise_expense(description, total_pennies, payer, final_totals):
+    api_key  = st.secrets["SPLITWISE_API_KEY"]
+    group_id = st.secrets["SPLITWISE_GROUP_ID"]
+    user_ids = {
+        "Joe": str(st.secrets["SPLITWISE_USER_JOE"]),
+        "Nic": str(st.secrets["SPLITWISE_USER_NIC"]),
+        "Nat": str(st.secrets["SPLITWISE_USER_NAT"]),
+    }
+
+    total_amount = f"{total_pennies / 100:.2f}"
+
+    payload = {
+        "cost":          total_amount,
+        "description":   description,
+        "date":          date.today().isoformat(),
+        "group_id":      group_id,
+        "split_equally": False,
+    }
+
+    # Payer paid the full amount
+    payer_id = user_ids[payer]
+    payload["users__0__user_id"]    = payer_id
+    payload["users__0__paid_share"] = total_amount
+    payload["users__0__owed_share"] = f"{final_totals[payer] / 100:.2f}"
+
+    idx = 1
+    for person, uid in user_ids.items():
+        if person == payer:
+            continue
+        payload[f"users__{idx}__user_id"]    = uid
+        payload[f"users__{idx}__paid_share"] = "0.00"
+        payload[f"users__{idx}__owed_share"] = f"{final_totals[person] / 100:.2f}"
+        idx += 1
+
+    response = requests.post(
+        "https://secure.splitwise.com/api/v3.0/create_expense",
+        headers={"Authorization": f"Bearer {api_key}"},
+        data=payload
+    )
+    return response.json()
 
 # ==============================
 # Reset / New Receipt
@@ -247,11 +294,13 @@ if "receipt_items" in st.session_state:
         assignments.append({"price": float(item["price"]), "split": selected})
 
     # ==============================
-    # Final Calculation (with proper penny rounding)
+    # Who Paid + Finalise
     # ==============================
     st.divider()
-    if st.button("✅ Finalise Split", type="primary"):
+    st.subheader("Who paid today?")
+    payer = st.radio("Select payer", PEOPLE, horizontal=True, label_visibility="collapsed")
 
+    if st.button("✅ Finalise Split", type="primary"):
         final_totals = {p: 0 for p in PEOPLE}
 
         for item in assignments:
@@ -267,6 +316,13 @@ if "receipt_items" in st.session_state:
                 for winner in random.sample(item["split"], k=remainder):
                     final_totals[winner] += 1
 
+        st.session_state.final_totals = final_totals
+        st.session_state.payer = payer
+
+    if "final_totals" in st.session_state:
+        final_totals = st.session_state.final_totals
+        payer = st.session_state.payer
+
         st.balloons()
         st.success("### 🎉 Final Totals")
 
@@ -276,4 +332,22 @@ if "receipt_items" in st.session_state:
 
         grand = sum(final_totals.values())
         st.metric(label="🧾 Grand Total (all splits)", value=f"£{grand / 100:.2f}")
-        st.caption("Add this to Splitwise and you're done! 🙌")
+
+        st.divider()
+        st.subheader("📲 Send to Splitwise")
+        expense_name = st.text_input(
+            "Expense name",
+            value="Sainsbury's"
+        )
+
+        if st.button("➕ Create Splitwise Expense", type="primary"):
+            with st.spinner("Creating expense in Splitwise..."):
+                try:
+                    result = create_splitwise_expense(expense_name, grand, payer, final_totals)
+                    if "expense" in result:
+                        exp = result["expense"]
+                        st.success(f"✅ Expense \"{exp['description']}\" added to Splitwise! {payer} paid £{grand/100:.2f}.")
+                    else:
+                        st.error(f"Splitwise returned an error: {result}")
+                except Exception as e:
+                    st.error(f"Failed to create expense: {e}")
