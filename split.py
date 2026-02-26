@@ -2,7 +2,6 @@ import streamlit as st
 from google import genai
 from PIL import Image
 import json
-import random
 import requests
 import uuid
 from datetime import date
@@ -18,11 +17,64 @@ PEOPLE = ["Joe", "Nic", "Nat"]
 
 st.markdown("""
 <style>
+    .block-container { padding-top: 1.5rem; }
+
+    /* Stepper */
+    .stepper {
+        display: flex;
+        align-items: center;
+        gap: 0;
+        margin: 0 0 2rem 0;
+    }
+    .step {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 20px;
+        border-radius: 8px;
+        font-weight: 600;
+        font-size: 0.95rem;
+        color: #94a3b8;
+        background: transparent;
+        white-space: nowrap;
+    }
+    .step-number {
+        width: 28px; height: 28px;
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 0.8rem;
+        font-weight: 700;
+        background: #e2e8f0;
+        color: #94a3b8;
+        flex-shrink: 0;
+    }
+    .step.active {
+        color: #0f172a;
+        background: #f1f5f9;
+        border-radius: 8px;
+    }
+    .step.active .step-number {
+        background: #0f172a;
+        color: white;
+    }
+    .step.done {
+        color: #16a34a;
+    }
+    .step.done .step-number {
+        background: #16a34a;
+        color: white;
+    }
+    .step-arrow {
+        color: #cbd5e1;
+        font-size: 1.1rem;
+        padding: 0 4px;
+    }
+
+    /* Badges */
     .badge-low { background:#fef3c7; color:#92400e; border:1px solid #fcd34d; border-radius:4px; padding:1px 6px; font-size:0.75rem; font-weight:600; }
     .badge-ok  { background:#dcfce7; color:#166534; border:1px solid #86efac; border-radius:4px; padding:1px 6px; font-size:0.75rem; font-weight:600; }
+
     div[data-testid="stMetric"] { background: transparent !important; }
-    /* Tighten up tab content padding */
-    .block-container { padding-top: 1.5rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -77,8 +129,35 @@ def create_splitwise_expense(description, total_pennies, payer, final_totals):
     )
     return response.json()
 
+def render_stepper(current_step):
+    """Render a visual stepper. current_step: 1=Review, 2=Split, 3=Finalise"""
+    steps = ["Review Items", "Split", "Finalise"]
+    html  = '<div class="stepper">'
+    for i, label in enumerate(steps, 1):
+        if i < current_step:
+            css = "done"
+            num = "✓"
+        elif i == current_step:
+            css = "active"
+            num = str(i)
+        else:
+            css = ""
+            num = str(i)
+
+        html += f'''
+        <div class="step {css}">
+            <div class="step-number">{num}</div>
+            {label}
+        </div>'''
+
+        if i < len(steps):
+            html += '<span class="step-arrow">›</span>'
+
+    html += '</div>'
+    st.markdown(html, unsafe_allow_html=True)
+
 # ==============================
-# Sidebar — Settings (set and forget)
+# Sidebar
 # ==============================
 with st.sidebar:
     st.header("⚙️ Settings")
@@ -87,24 +166,10 @@ with st.sidebar:
     apply_15       = st.checkbox("15% Colleague Discount", value=True)
     extra_discount = st.number_input("Extra Discount (%)", min_value=0.0, max_value=100.0, step=0.5, value=0.0)
 
-    st.divider()
-
-    st.subheader("🧾 Total Checker")
-    st.caption("Optional — verify AI matched your receipt.")
     if "receipt_items" in st.session_state:
-        ai_total     = sum(float(i["price"]) for i in st.session_state.receipt_items)
-        actual_total = st.number_input("Actual Receipt Total (£)", min_value=0.0, step=0.01)
-        st.metric("AI Total (£)", f"{ai_total:.2f}")
-        if actual_total > 0:
-            diff = round(actual_total - ai_total, 2)
-            if abs(diff) < 0.01:
-                st.success("✅ Totals match!")
-            elif diff > 0:
-                st.error(f"AI is £{diff:.2f} LOW")
-            else:
-                st.error(f"AI is £{abs(diff):.2f} HIGH")
-    else:
-        st.info("Upload a receipt first.")
+        st.divider()
+        ai_total = sum(float(i["price"]) for i in st.session_state.receipt_items)
+        st.metric("🧾 AI Total (£)", f"{ai_total:.2f}")
 
     st.divider()
     if st.button("🔄 New Receipt", use_container_width=True):
@@ -113,14 +178,20 @@ with st.sidebar:
         st.rerun()
 
 # ==============================
+# Session state init
+# ==============================
+if "step" not in st.session_state:
+    st.session_state.step = 0  # 0=upload, 1=review, 2=split, 3=finalise
+
+# ==============================
 # Header
 # ==============================
 st.title("🛒 Joe, Nic & Nat's Sainsbury's Splitter")
 
 # ==============================
-# Step 1 — Upload & Scan (always visible until analysed)
+# STEP 0 — Upload & Scan
 # ==============================
-if "receipt_items" not in st.session_state:
+if st.session_state.step == 0:
     uploaded_file = st.file_uploader("Upload Receipt Photo", type=["jpg", "jpeg", "png"])
 
     if uploaded_file:
@@ -134,7 +205,6 @@ if "receipt_items" not in st.session_state:
             if st.button("🔍 Analyse Receipt", type="primary", use_container_width=True):
                 with st.spinner("Gemini is reading the receipt..."):
                     img.thumbnail((1500, 1500))
-
                     prompt = """
                     Extract items from this Sainsbury's receipt and return the FINAL price the customer actually paid for each item.
 
@@ -170,7 +240,6 @@ if "receipt_items" not in st.session_state:
                       - 0.5 = name or price had to be guessed (blurry, cut off, ambiguous)
                       - 0.0 = very uncertain
                     """
-
                     try:
                         response = client.models.generate_content(
                             model="gemini-2.5-flash",
@@ -182,11 +251,9 @@ if "receipt_items" not in st.session_state:
                             }
                         )
                         items = json.loads(response.text)
-
                         st.session_state.receipt_items = []
                         st.session_state.assignments   = {}
                         low_conf_count = 0
-
                         for item in items:
                             item_id    = str(uuid.uuid4())
                             item["id"] = item_id
@@ -194,26 +261,26 @@ if "receipt_items" not in st.session_state:
                             st.session_state.assignments[item_id] = PEOPLE[:]
                             if item.get("confidence", 1.0) < 0.75:
                                 low_conf_count += 1
-
-                        st.success(f"✓ {len(items)} items found!")
+                        st.session_state.step = 1
                         if low_conf_count:
-                            st.warning(f"⚠️ {low_conf_count} item(s) need checking.")
+                            st.session_state.low_conf_count = low_conf_count
                         st.rerun()
-
                     except Exception as e:
                         st.error(f"Error: {e}")
 
 # ==============================
-# Main Tabs — only shown after analysis
+# STEPS 1-3 — Main flow
 # ==============================
 else:
-    tab1, tab2, tab3 = st.tabs(["✏️ Review Items", "🔀 Split", "✅ Finalise"])
+    render_stepper(st.session_state.step)
 
-    # ==========================
-    # TAB 1 — Review & Edit
-    # ==========================
-    with tab1:
-        st.caption(f"{len(st.session_state.receipt_items)} items • edit names/prices or delete anything wrong, then head to Split.")
+    # ---- STEP 1: Review ----
+    if st.session_state.step == 1:
+        n_items = len(st.session_state.receipt_items)
+        st.caption(f"{n_items} items found — edit names/prices or delete anything wrong.")
+
+        if st.session_state.get("low_conf_count"):
+            st.warning(f"⚠️ {st.session_state.low_conf_count} item(s) flagged as uncertain — check the badges below.")
 
         updated_items = []
         for item in st.session_state.receipt_items:
@@ -230,7 +297,6 @@ else:
             price  = cols[1].number_input("Price", value=float(item["price"]), step=0.01,
                                           key=f"price_{item_id}", label_visibility="collapsed")
             delete = cols[2].button("❌", key=f"delete_{item_id}")
-
             if not delete:
                 updated_items.append({"id": item_id, "name": name, "price": price, "confidence": conf})
             else:
@@ -250,12 +316,15 @@ else:
                 st.session_state.assignments[new_id] = PEOPLE[:]
                 st.rerun()
             else:
-                st.warning("Please enter an item name.")
+                st.warning("Enter an item name.")
 
-    # ==========================
-    # TAB 2 — Split
-    # ==========================
-    with tab2:
+        st.divider()
+        if st.button("Next → Split Items", type="primary", use_container_width=True):
+            st.session_state.step = 2
+            st.rerun()
+
+    # ---- STEP 2: Split ----
+    elif st.session_state.step == 2:
         st.caption("Everyone is in by default — remove people from items they didn't share.")
 
         for item in st.session_state.receipt_items:
@@ -280,10 +349,17 @@ else:
             )
             st.session_state.assignments[item_id] = selected
 
-    # ==========================
-    # TAB 3 — Finalise
-    # ==========================
-    with tab3:
+        st.divider()
+        nav = st.columns(2)
+        if nav[0].button("← Back to Review", use_container_width=True):
+            st.session_state.step = 1
+            st.rerun()
+        if nav[1].button("Next → Finalise", type="primary", use_container_width=True):
+            st.session_state.step = 3
+            st.rerun()
+
+    # ---- STEP 3: Finalise ----
+    elif st.session_state.step == 3:
         st.subheader("Who paid today?")
         payer = st.radio("Payer", PEOPLE, horizontal=True, label_visibility="collapsed")
 
@@ -331,3 +407,8 @@ else:
                             st.error(f"Splitwise error: {result}")
                     except Exception as e:
                         st.error(f"Failed: {e}")
+
+        st.divider()
+        if st.button("← Back to Split", use_container_width=True):
+            st.session_state.step = 2
+            st.rerun()
