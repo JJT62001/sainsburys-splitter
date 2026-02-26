@@ -4,7 +4,9 @@ from PIL import Image
 import json
 import random
 import requests
+import uuid
 from datetime import date
+from pydantic import BaseModel
 
 # ==============================
 # Setup Gemini Client (Secure)
@@ -18,10 +20,8 @@ st.set_page_config(page_title="Sainsbury's Splitter", layout="wide")
 # ==============================
 st.markdown("""
 <style>
-    /* Confidence warning badge */
     .badge-low  { background:#fef3c7; color:#92400e; border:1px solid #fcd34d; border-radius:4px; padding:1px 6px; font-size:0.75rem; font-weight:600; }
     .badge-ok   { background:#dcfce7; color:#166534; border:1px solid #86efac; border-radius:4px; padding:1px 6px; font-size:0.75rem; font-weight:600; }
-
     div[data-testid="stMetric"] { background: transparent !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -29,6 +29,15 @@ st.markdown("""
 st.title("🛒 Joe, Nic & Nat's Sainsbury's Splitter")
 
 PEOPLE = ["Joe", "Nic", "Nat"]
+
+# ==============================
+# Pydantic schema — forces Gemini to return valid structured data
+# ==============================
+class ReceiptItem(BaseModel):
+    name: str
+    price: float
+    confidence: float
+
 # ==============================
 # Helpers
 # ==============================
@@ -39,8 +48,6 @@ def discounted_price(price: float, apply_15: bool, extra_discount: float) -> flo
     if extra_discount > 0:
         p *= (1 - extra_discount / 100)
     return p
-
-
 
 # ==============================
 # Splitwise Helper
@@ -64,7 +71,6 @@ def create_splitwise_expense(description, total_pennies, payer, final_totals):
         "split_equally": False,
     }
 
-    # Payer paid the full amount
     payer_id = user_ids[payer]
     payload["users__0__user_id"]    = payer_id
     payload["users__0__paid_share"] = total_amount
@@ -106,6 +112,9 @@ if uploaded_file:
     if st.button("Analyze Receipt"):
         with st.spinner("Gemini is reading the receipt..."):
 
+            # Resize to cap bandwidth without losing legibility
+            img.thumbnail((1500, 1500))
+
             prompt = """
             Extract items from this Sainsbury's receipt and return the FINAL price the customer actually paid for each item.
 
@@ -136,57 +145,42 @@ if uploaded_file:
             - Never include cancelled items or their reversal lines.
             - Ignore: Total, Subtotal, Bag charge, card payment, and change lines.
 
-            For each item add a "confidence" field:
+            For each item add a confidence field:
               - 1.0 = name and price are clearly legible
               - 0.5 = name or price had to be guessed (blurry, cut off, ambiguous)
               - 0.0 = very uncertain
-
-            Return ONLY a valid JSON list, no markdown, no extra text:
-            [
-              {"name": "Item Name", "price": 1.50, "confidence": 1.0}
-            ]
             """
 
             try:
+                # Structured output — Gemini forced to return valid typed JSON, no regex scraping
                 response = client.models.generate_content(
                     model="gemini-2.5-flash",
-                    contents=[
-                        {
-                            "role": "user",
-                            "parts": [
-                                {"text": prompt},
-                                {
-                                    "inline_data": {
-                                        "mime_type": "image/png",
-                                        "data": uploaded_file.getvalue()
-                                    }
-                                }
-                            ]
-                        }
-                    ]
+                    contents=[prompt, img],
+                    config={
+                        "response_mime_type": "application/json",
+                        "response_schema": list[ReceiptItem],
+                        "temperature": 0.1,
+                    }
                 )
 
-                raw_text = response.text or ""
-                raw_text = raw_text.replace("```json", "").replace("```", "").strip()
-                start_index = raw_text.find("[")
-                end_index = raw_text.rfind("]") + 1
+                items = json.loads(response.text)
 
-                if start_index == -1 or end_index == 0:
-                    st.error("Couldn't find valid JSON list in AI response.")
-                    st.write(raw_text)
-                    st.stop()
+                # UUID-based tracking — prevents index shift bugs when items are deleted
+                st.session_state.receipt_items = []
+                st.session_state.assignments   = {}
 
-                items = json.loads(raw_text[start_index:end_index])
-
-                # Back-fill confidence if model forgot
+                low_conf_count = 0
                 for item in items:
-                    item.setdefault("confidence", 1.0)
+                    item_id    = str(uuid.uuid4())
+                    item["id"] = item_id
+                    st.session_state.receipt_items.append(item)
+                    st.session_state.assignments[item_id] = PEOPLE[:]
+                    if item.get("confidence", 1.0) < 0.75:
+                        low_conf_count += 1
 
-                st.session_state.receipt_items = items
-                low_conf = [i for i in items if i["confidence"] < 0.75]
-                st.success(f"Receipt analysed — {len(items)} items found!")
-                if low_conf:
-                    st.warning(f"⚠️ {len(low_conf)} item(s) flagged as uncertain — please double-check them below.")
+                st.success(f"Receipt analysed - {len(items)} items found!")
+                if low_conf_count:
+                    st.warning(f"⚠️ {low_conf_count} item(s) flagged as uncertain - please double-check them below.")
 
             except Exception as e:
                 st.error(f"Error analysing receipt: {e}")
@@ -200,26 +194,26 @@ if "receipt_items" in st.session_state:
     st.subheader("Review & Edit Items")
 
     updated_items = []
-    for i, item in enumerate(st.session_state.receipt_items):
-        conf = float(item.get("confidence", 1.0))
-        badge = (
+    for item in st.session_state.receipt_items:
+        item_id = item["id"]
+        conf    = float(item.get("confidence", 1.0))
+        badge   = (
             '<span class="badge-low">⚠ Check me</span>'
             if conf < 0.75 else
             '<span class="badge-ok">✓ Clear</span>'
         )
 
         cols = st.columns([3, 2, 1, 1])
-
-        name = cols[0].text_input("Item Name", value=item["name"], key=f"name_{i}", label_visibility="collapsed")
+        name  = cols[0].text_input("Item Name", value=item["name"], key=f"name_{item_id}", label_visibility="collapsed")
         cols[0].markdown(badge, unsafe_allow_html=True)
-
-        price = cols[1].number_input("Price (£)", value=float(item["price"]), step=0.01,
-                                     key=f"price_{i}", label_visibility="collapsed")
-
-        delete = cols[2].button("❌", key=f"delete_{i}")
+        price = cols[1].number_input("Price", value=float(item["price"]), step=0.01,
+                                     key=f"price_{item_id}", label_visibility="collapsed")
+        delete = cols[2].button("❌", key=f"delete_{item_id}")
 
         if not delete:
-            updated_items.append({"name": name, "price": price, "confidence": conf})
+            updated_items.append({"id": item_id, "name": name, "price": price, "confidence": conf})
+        else:
+            st.session_state.assignments.pop(item_id, None)
 
     st.session_state.receipt_items = updated_items
 
@@ -228,11 +222,13 @@ if "receipt_items" in st.session_state:
     # ==============================
     st.markdown("### ➕ Add Missing Item")
     c1, c2, c3 = st.columns([3, 2, 1])
-    new_name  = c1.text_input("New Item Name",      label_visibility="collapsed", placeholder="Item name")
-    new_price = c2.number_input("New Item Price (£)", min_value=0.0, step=0.01, label_visibility="collapsed")
+    new_name  = c1.text_input("New Item Name", label_visibility="collapsed", placeholder="Item name")
+    new_price = c2.number_input("New Item Price", min_value=0.0, step=0.01, label_visibility="collapsed")
     if c3.button("Add Item"):
         if new_name:
-            st.session_state.receipt_items.append({"name": new_name, "price": new_price, "confidence": 1.0})
+            new_id = str(uuid.uuid4())
+            st.session_state.receipt_items.append({"id": new_id, "name": new_name, "price": new_price, "confidence": 1.0})
+            st.session_state.assignments[new_id] = PEOPLE[:]
             st.rerun()
         else:
             st.warning("Please enter an item name.")
@@ -261,7 +257,7 @@ if "receipt_items" in st.session_state:
     st.divider()
     st.subheader("Discount Settings")
     col1, col2 = st.columns(2)
-    apply_15      = col1.checkbox("Apply 15% Colleague Discount", value=True)
+    apply_15       = col1.checkbox("Apply 15% Colleague Discount", value=True)
     extra_discount = col2.number_input("Additional Discount (%)", min_value=0.0, max_value=100.0,
                                        step=0.5, value=0.0)
     st.info(f"Active Discounts:  •  15% Colleague: {'ON' if apply_15 else 'OFF'}  •  Extra: {extra_discount}%")
@@ -272,38 +268,31 @@ if "receipt_items" in st.session_state:
     st.divider()
     st.subheader("Split the Items")
 
-    # Initialise persistent assignment state
-    n = len(st.session_state.receipt_items)
-    if "assignments" not in st.session_state or len(st.session_state.assignments) != n:
-        st.session_state.assignments = [["Joe", "Nic", "Nat"] for _ in range(n)]
-
-    assignments = []
-
-    for i, item in enumerate(st.session_state.receipt_items):
-        cols = st.columns([3, 3, 1])
-
-        conf = float(item.get("confidence", 1.0))
+    for item in st.session_state.receipt_items:
+        item_id    = item["id"]
+        conf       = float(item.get("confidence", 1.0))
         conf_badge = " ⚠️" if conf < 0.75 else ""
+
+        cols = st.columns([3, 3, 1])
         cols[0].markdown(f"**{item['name']}{conf_badge}** &nbsp; £{float(item['price']):.2f}",
                          unsafe_allow_html=True)
 
-        # "All" quick-assign button — must set widget key BEFORE the widget renders
-        if cols[2].button("All", key=f"all_{i}"):
-            st.session_state[f"split_{i}"] = PEOPLE[:]
+        # All button writes to widget key BEFORE multiselect renders — avoids default= conflict
+        if cols[2].button("All", key=f"all_{item_id}"):
+            st.session_state[f"split_{item_id}"] = PEOPLE[:]
 
-        # Seed the widget key from assignments if not yet in session state
-        if f"split_{i}" not in st.session_state:
-            st.session_state[f"split_{i}"] = st.session_state.assignments[i]
+        # Seed widget key from assignments on first render only
+        if f"split_{item_id}" not in st.session_state:
+            st.session_state[f"split_{item_id}"] = st.session_state.assignments.get(item_id, PEOPLE[:])
 
         selected = cols[1].multiselect(
             "Who's in?",
             PEOPLE,
-            key=f"split_{i}",
+            key=f"split_{item_id}",
             label_visibility="collapsed"
         )
 
-        st.session_state.assignments[i] = selected
-        assignments.append({"price": float(item["price"]), "split": selected})
+        st.session_state.assignments[item_id] = selected
 
     # ==============================
     # Who Paid + Finalise
@@ -315,25 +304,27 @@ if "receipt_items" in st.session_state:
     if st.button("✅ Finalise Split", type="primary"):
         final_totals = {p: 0 for p in PEOPLE}
 
-        for item in assignments:
-            if not item["split"]:
+        for item in st.session_state.receipt_items:
+            item_id   = item["id"]
+            split     = st.session_state.assignments.get(item_id, [])
+            if not split:
                 continue
-            price = discounted_price(item["price"], apply_15, extra_discount)
-            pennies = round(price * 100)
-            share = pennies // len(item["split"])
-            remainder = pennies % len(item["split"])
-            for person in item["split"]:
+            price     = discounted_price(float(item["price"]), apply_15, extra_discount)
+            pennies   = round(price * 100)
+            share     = pennies // len(split)
+            remainder = pennies % len(split)
+            for person in split:
                 final_totals[person] += share
             if remainder > 0:
-                for winner in random.sample(item["split"], k=remainder):
+                for winner in random.sample(split, k=remainder):
                     final_totals[winner] += 1
 
         st.session_state.final_totals = final_totals
-        st.session_state.payer = payer
+        st.session_state.payer        = payer
 
     if "final_totals" in st.session_state:
         final_totals = st.session_state.final_totals
-        payer = st.session_state.payer
+        payer        = st.session_state.payer
 
         st.balloons()
         st.success("### 🎉 Final Totals")
@@ -347,17 +338,14 @@ if "receipt_items" in st.session_state:
 
         st.divider()
         st.subheader("📲 Send to Splitwise")
-        expense_name = st.text_input(
-            "Expense name",
-            value="Sainsbury's"
-        )
+        expense_name = st.text_input("Expense name", value="Sainsbury's")
 
         if st.button("➕ Create Splitwise Expense", type="primary"):
             with st.spinner("Creating expense in Splitwise..."):
                 try:
-                    result = create_splitwise_expense(expense_name, grand, payer, final_totals)
+                    result   = create_splitwise_expense(expense_name, grand, payer, final_totals)
                     expenses = result.get("expenses", [])
-                    errors = result.get("errors", {})
+                    errors   = result.get("errors", {})
                     if expenses and not errors:
                         exp = expenses[0]
                         st.success(f"✅ '{exp['description']}' added to Splitwise! {payer} paid £{grand/100:.2f}.")
