@@ -415,11 +415,21 @@ else:
 
         # Nudge to recalculate if payer changed after a previous calculation
         already_calculated = "final_totals" in st.session_state
-        payer_changed      = already_calculated and payer != st.session_state.get("calculated_payer")
+        discount_changed = (
+            already_calculated and (
+                colleague_discount != st.session_state.get("calculated_colleague") or
+                extra_discount     != st.session_state.get("calculated_extra")
+            )
+        )
+        payer_changed = already_calculated and payer != st.session_state.get("calculated_payer")
+        needs_recalc  = payer_changed or discount_changed
+
         if payer_changed:
             st.warning("⚠️ Payer has changed — hit Recalculate to update the totals.")
+        if discount_changed:
+            st.warning("⚠️ Discount has changed — hit Recalculate to update the totals.")
 
-        btn_label = "🔄 Recalculate Split" if payer_changed else "Calculate Split"
+        btn_label = "🔄 Recalculate Split" if needs_recalc else "Calculate Split"
         if st.button(btn_label, type="primary", use_container_width=True):
             exact_totals = {p: 0.0 for p in PEOPLE}
             for item in st.session_state.receipt_items:
@@ -432,11 +442,13 @@ else:
                 for person in split:
                     exact_totals[person] += share
             final_totals = {p: round(v * 100) for p, v in exact_totals.items()}
-            st.session_state.final_totals      = final_totals
-            st.session_state.payer             = payer
-            st.session_state.calculated_payer  = payer
-            st.session_state.splitwise_sent    = False
-            st.session_state.balloons_shown    = False
+            st.session_state.final_totals              = final_totals
+            st.session_state.payer                     = payer
+            st.session_state.calculated_payer          = payer
+            st.session_state.calculated_colleague      = colleague_discount
+            st.session_state.calculated_extra          = extra_discount
+            st.session_state.splitwise_sent            = False
+            st.session_state.balloons_shown            = False
 
         if "final_totals" in st.session_state:
             final_totals = st.session_state.final_totals
