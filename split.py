@@ -108,7 +108,7 @@ if uploaded_file:
 
             prompt = """
             Extract items from this Sainsbury's receipt.
-            Use the Nectar price if available.
+            Always use the discounted Nectar price if available.
             Ignore 'Total', 'Subtotal', 'Bag' and payment lines.
 
             For each item also add a "confidence" field:
@@ -158,7 +158,7 @@ if uploaded_file:
                     item.setdefault("confidence", 1.0)
 
                 st.session_state.receipt_items = items
-                low_conf = [i for i in items if i["confidence"] < 0.75]
+                low_conf = [i for i in items if i["confidence"] < 0.85]
                 st.success(f"Receipt analysed — {len(items)} items found!")
                 if low_conf:
                     st.warning(f"⚠️ {len(low_conf)} item(s) flagged as uncertain — please double-check them below.")
@@ -337,3 +337,4 @@ if "receipt_items" in st.session_state:
         grand = sum(final_totals.values())
         st.metric(label="🧾 Grand Total (all splits)", value=f"£{grand / 100:.2f}")
         st.caption("Add this to Splitwise and you're done! 🙌")
+
