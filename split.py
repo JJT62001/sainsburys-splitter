@@ -365,7 +365,8 @@ else:
         for item in st.session_state.receipt_items:
             item_id      = item["id"]
             conf         = float(item.get("confidence", 1.0))
-            conf_badge   = " ⚠️" if conf < 0.75 else ""
+            cleared_items = st.session_state.get("cleared_items", set())
+            conf_badge   = " ⚠️" if conf < 0.75 and item_id not in cleared_items else ""
             display_name = item.get("friendly_name", item["name"])
 
             cols = st.columns([3, 3, 1])
@@ -414,7 +415,7 @@ else:
 
         # Nudge to recalculate if payer changed after a previous calculation
         already_calculated = "final_totals" in st.session_state
-        payer_changed      = already_calculated and payer != st.session_state.get("payer")
+        payer_changed      = already_calculated and payer != st.session_state.get("calculated_payer")
         if payer_changed:
             st.warning("⚠️ Payer has changed — hit Recalculate to update the totals.")
 
@@ -431,8 +432,11 @@ else:
                 for person in split:
                     exact_totals[person] += share
             final_totals = {p: round(v * 100) for p, v in exact_totals.items()}
-            st.session_state.final_totals = final_totals
-            st.session_state.payer        = payer
+            st.session_state.final_totals      = final_totals
+            st.session_state.payer             = payer
+            st.session_state.calculated_payer  = payer
+            st.session_state.splitwise_sent    = False
+            st.session_state.balloons_shown    = False
 
         if "final_totals" in st.session_state:
             final_totals = st.session_state.final_totals
