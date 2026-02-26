@@ -265,6 +265,10 @@ if "receipt_items" in st.session_state:
         cols[0].markdown(f"**{item['name']}{conf_badge}** &nbsp; £{float(item['price']):.2f}",
                          unsafe_allow_html=True)
 
+        # "All" quick-assign button — must set widget key BEFORE the widget renders
+        if cols[2].button("All", key=f"all_{i}"):
+            st.session_state[f"split_{i}"] = PEOPLE[:]
+
         selected = cols[1].multiselect(
             "Who's in?",
             PEOPLE,
@@ -272,11 +276,6 @@ if "receipt_items" in st.session_state:
             key=f"split_{i}",
             label_visibility="collapsed"
         )
-
-        # "All" quick-assign button
-        if cols[2].button("All", key=f"all_{i}"):
-            st.session_state.assignments[i] = PEOPLE[:]
-            st.rerun()
 
         st.session_state.assignments[i] = selected
         assignments.append({"price": float(item["price"]), "split": selected})
