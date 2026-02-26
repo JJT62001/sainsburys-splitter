@@ -168,7 +168,11 @@ with st.sidebar:
 
     if "receipt_items" in st.session_state:
         st.divider()
-        ai_total = sum(float(i["price"]) for i in st.session_state.receipt_items)
+        # Read live widget values if on review step, otherwise fall back to stored prices
+        ai_total = sum(
+            float(st.session_state.get(f"price_{i['id']}", i["price"]))
+            for i in st.session_state.receipt_items
+        )
         st.metric("🧾 AI Total (£)", f"{ai_total:.2f}")
 
     st.divider()
