@@ -263,7 +263,7 @@ if "receipt_items" in st.session_state:
     # Initialise persistent assignment state
     n = len(st.session_state.receipt_items)
     if "assignments" not in st.session_state or len(st.session_state.assignments) != n:
-        st.session_state.assignments = [[] for _ in range(n)]
+        st.session_state.assignments = [["Joe", "Nic", "Nat"] for _ in range(n)]
 
     assignments = []
 
