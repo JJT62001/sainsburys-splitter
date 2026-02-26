@@ -67,10 +67,10 @@ class ReceiptItem(BaseModel):
 # ==============================
 # Helpers
 # ==============================
-def discounted_price(price: float, apply_15: bool, extra_discount: float) -> float:
+def discounted_price(price: float, colleague_discount: float, extra_discount: float) -> float:
     p = price
-    if apply_15:
-        p *= 0.85
+    if colleague_discount > 0:
+        p *= (1 - colleague_discount / 100)
     if extra_discount > 0:
         p *= (1 - extra_discount / 100)
     return p
@@ -130,15 +130,26 @@ with st.sidebar:
     st.header("⚙️ Settings")
 
     st.subheader("Discounts")
-    apply_15       = st.checkbox("15% Colleague Discount", value=True)
+    colleague_option = st.selectbox(
+        "Colleague Discount",
+        options=["10% — Mon to Thu", "15% — Fri & Sat", "20% — Special offer", "None"],
+        index=0,
+    )
+    colleague_discount_map = {
+        "10% — Mon to Thu": 10.0,
+        "15% — Fri & Sat": 15.0,
+        "20% — Special offer": 20.0,
+        "None": 0.0,
+    }
+    colleague_discount = colleague_discount_map[colleague_option]
     extra_discount = st.number_input("Extra Discount (%)", min_value=0.0, max_value=100.0, step=0.5, value=0.0)
 
-    if apply_15 or extra_discount > 0:
-        parts = []
-        if apply_15:
-            parts.append("15% colleague")
-        if extra_discount > 0:
-            parts.append(f"{extra_discount:.0f}% extra")
+    parts = []
+    if colleague_discount > 0:
+        parts.append(f"{colleague_discount:.0f}% colleague")
+    if extra_discount > 0:
+        parts.append(f"{extra_discount:.0f}% extra")
+    if parts:
         st.caption(f"🏷️ Active: {' + '.join(parts)}")
 
     if "receipt_items" in st.session_state:
@@ -390,8 +401,8 @@ else:
 
         # Discount reminder
         discount_parts = []
-        if apply_15:
-            discount_parts.append("15% colleague discount")
+        if colleague_discount > 0:
+            discount_parts.append(f"{colleague_discount:.0f}% colleague discount")
         if extra_discount > 0:
             discount_parts.append(f"{extra_discount:.0f}% extra discount")
         if discount_parts:
@@ -408,7 +419,7 @@ else:
                 split   = st.session_state.assignments.get(item_id, [])
                 if not split:
                     continue
-                price = discounted_price(float(item["price"]), apply_15, extra_discount)
+                price = discounted_price(float(item["price"]), colleague_discount, extra_discount)
                 share = price / len(split)
                 for person in split:
                     exact_totals[person] += share
