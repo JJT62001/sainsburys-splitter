@@ -133,7 +133,7 @@ with st.sidebar:
     colleague_option = st.selectbox(
         "Colleague Discount",
         options=["10% — Mon to Thu", "15% — Fri & Sat", "20% — Special offer", "None"],
-        index=0,
+        index=1,
     )
     colleague_discount_map = {
         "10% — Mon to Thu": 10.0,
@@ -473,7 +473,9 @@ else:
                             st.error(f"Failed: {e}")
             else:
                 st.success(f"✅ '{expense_name}' added to Splitwise! {payer} paid £{grand/100:.2f}.")
-                st.balloons()
+                if not st.session_state.get("balloons_shown"):
+                    st.session_state.balloons_shown = True
+                    st.balloons()
                 st.divider()
                 if st.button("🛒 Start a New Receipt", type="primary", use_container_width=True):
                     for key in list(st.session_state.keys()):
