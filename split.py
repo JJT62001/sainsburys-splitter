@@ -16,32 +16,9 @@ st.set_page_config(page_title="Sainsbury's Splitter", layout="wide")
 # ==============================
 st.markdown("""
 <style>
-    /* Person colour tokens */
-    :root {
-        --joe:  #22c55e;   /* green  */
-        --nic:  #3b82f6;   /* blue   */
-        --nat:  #a855f7;   /* purple */
-        --shared: #f59e0b; /* amber  */
-    }
-
-    /* Row highlights */
-    .row-joe    { background: rgba(34,197,94,0.10);  border-left: 4px solid var(--joe);  border-radius: 6px; padding: 6px 10px; margin-bottom: 6px; }
-    .row-nic    { background: rgba(59,130,246,0.10); border-left: 4px solid var(--nic);  border-radius: 6px; padding: 6px 10px; margin-bottom: 6px; }
-    .row-nat    { background: rgba(168,85,247,0.10); border-left: 4px solid var(--nat);  border-radius: 6px; padding: 6px 10px; margin-bottom: 6px; }
-    .row-shared { background: rgba(245,158,11,0.10); border-left: 4px solid var(--shared); border-radius: 6px; padding: 6px 10px; margin-bottom: 6px; }
-    .row-none   { background: rgba(100,100,100,0.05); border-left: 4px solid #ccc; border-radius: 6px; padding: 6px 10px; margin-bottom: 6px; }
-
     /* Confidence warning badge */
     .badge-low  { background:#fef3c7; color:#92400e; border:1px solid #fcd34d; border-radius:4px; padding:1px 6px; font-size:0.75rem; font-weight:600; }
     .badge-ok   { background:#dcfce7; color:#166534; border:1px solid #86efac; border-radius:4px; padding:1px 6px; font-size:0.75rem; font-weight:600; }
-
-    /* Totals bar */
-    .totals-bar { display:flex; gap:16px; flex-wrap:wrap; margin: 8px 0; }
-    .total-chip { border-radius:12px; padding:10px 20px; font-weight:700; font-size:1.1rem; flex:1; text-align:center; min-width:120px; }
-    .chip-joe   { background:rgba(34,197,94,0.15);  border:2px solid var(--joe);  color:#15803d; }
-    .chip-nic   { background:rgba(59,130,246,0.15); border:2px solid var(--nic);  color:#1d4ed8; }
-    .chip-nat   { background:rgba(168,85,247,0.15); border:2px solid var(--nat);  color:#7e22ce; }
-    .chip-grand { background:rgba(15,23,42,0.07);   border:2px solid #475569;     color:#1e293b; }
 
     div[data-testid="stMetric"] { background: transparent !important; }
 </style>
@@ -50,8 +27,6 @@ st.markdown("""
 st.title("🛒 Joe, Nic & Nat's Sainsbury's Splitter")
 
 PEOPLE = ["Joe", "Nic", "Nat"]
-PERSON_CSS = {"Joe": "chip-joe", "Nic": "chip-nic", "Nat": "chip-nat"}
-
 # ==============================
 # Helpers
 # ==============================
@@ -62,28 +37,6 @@ def discounted_price(price: float, apply_15: bool, extra_discount: float) -> flo
     if extra_discount > 0:
         p *= (1 - extra_discount / 100)
     return p
-
-
-def row_css_class(split: list) -> str:
-    if not split:
-        return "row-none"
-    if len(split) > 1:
-        return "row-shared"
-    return f"row-{split[0].lower()}"
-
-
-def live_totals(receipt_items, assignments, apply_15, extra_discount):
-    """Return per-person totals (in pence) from current multiselect state."""
-    totals = {p: 0 for p in PEOPLE}
-    for item, asgn in zip(receipt_items, assignments):
-        if not asgn:
-            continue
-        price = discounted_price(float(item["price"]), apply_15, extra_discount)
-        pennies = round(price * 100)
-        share = pennies // len(asgn)
-        for person in asgn:
-            totals[person] += share
-    return totals
 
 
 # ==============================
@@ -171,7 +124,7 @@ if uploaded_file:
                     item.setdefault("confidence", 1.0)
 
                 st.session_state.receipt_items = items
-                low_conf = [i for i in items if i["confidence"] < 0.85]
+                low_conf = [i for i in items if i["confidence"] < 0.75]
                 st.success(f"Receipt analysed — {len(items)} items found!")
                 if low_conf:
                     st.warning(f"⚠️ {len(low_conf)} item(s) flagged as uncertain — please double-check them below.")
@@ -268,9 +221,6 @@ if "receipt_items" in st.session_state:
     assignments = []
 
     for i, item in enumerate(st.session_state.receipt_items):
-        row_class = row_css_class(st.session_state.assignments[i])
-        st.markdown(f'<div class="{row_class}">', unsafe_allow_html=True)
-
         cols = st.columns([3, 3, 1])
 
         conf = float(item.get("confidence", 1.0))
@@ -295,29 +245,6 @@ if "receipt_items" in st.session_state:
 
         st.session_state.assignments[i] = selected
         assignments.append({"price": float(item["price"]), "split": selected})
-
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # ==============================
-    # Live Running Totals
-    # ==============================
-    st.divider()
-    st.subheader("💰 Live Totals")
-
-    live = live_totals(st.session_state.receipt_items,
-                       [st.session_state.assignments[i] for i in range(n)],
-                       apply_15, extra_discount)
-    grand_total = sum(live.values())
-
-    totals_html = '<div class="totals-bar">'
-    for person in PEOPLE:
-        css = PERSON_CSS[person]
-        totals_html += f'<div class="total-chip {css}">{person}<br>£{live[person]/100:.2f}</div>'
-    totals_html += f'<div class="total-chip chip-grand">🧾 Grand Total<br>£{grand_total/100:.2f}</div>'
-    totals_html += '</div>'
-    st.markdown(totals_html, unsafe_allow_html=True)
-
-    st.caption("Updates live as you assign items above. Grand total = sum of everyone's share (unassigned items excluded).")
 
     # ==============================
     # Final Calculation (with proper penny rounding)
