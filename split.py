@@ -269,10 +269,13 @@ if "receipt_items" in st.session_state:
         if cols[2].button("All", key=f"all_{i}"):
             st.session_state[f"split_{i}"] = PEOPLE[:]
 
+        # Seed the widget key from assignments if not yet in session state
+        if f"split_{i}" not in st.session_state:
+            st.session_state[f"split_{i}"] = st.session_state.assignments[i]
+
         selected = cols[1].multiselect(
             "Who's in?",
             PEOPLE,
-            default=st.session_state.assignments[i],
             key=f"split_{i}",
             label_visibility="collapsed"
         )
