@@ -240,7 +240,7 @@ if st.session_state.step == 0:
                     """
                     try:
                         response = client.models.generate_content(
-                            model="gemini-2.5-flash",
+                            model="gemini-2.0-flash",
                             contents=[prompt, img],
                             config={
                                 "response_mime_type": "application/json",
@@ -509,5 +509,6 @@ else:
         if st.button("← Back to Split", use_container_width=True):
             st.session_state.step = 2
             st.rerun()
+
 
 
