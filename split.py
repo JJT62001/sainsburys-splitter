@@ -133,15 +133,17 @@ with st.sidebar:
     model_option = st.selectbox(
         "Gemini Model",
         options=[
-            "gemini-2.5-flash — Best quality",
-            "gemini-2.5-flash-lite — Hit rate limit?",
+            "gemini-2.5-flash — Best (250/day)",
+            "gemini-2.5-pro — Smarter (100/day)",
+            "gemini-2.5-flash-lite — Fastest (1000/day)",
         ],
         index=0,
-        help="Switch to Lite if you hit the daily rate limit"
+        help="Switch model if you hit the daily rate limit"
     )
     model_map = {
-        "gemini-2.5-flash — Best quality":       "gemini-2.5-flash",
-        "gemini-2.5-flash-lite — Hit rate limit?": "gemini-2.5-flash-lite",
+        "gemini-2.5-flash — Best (250/day)":      "gemini-2.5-flash",
+        "gemini-2.5-pro — Smarter (100/day)":     "gemini-2.5-pro",
+        "gemini-2.5-flash-lite — Fastest (1000/day)": "gemini-2.5-flash-lite",
     }
     selected_model = model_map[model_option]
 
