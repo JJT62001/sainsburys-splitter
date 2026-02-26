@@ -431,18 +431,20 @@ else:
             st.subheader("📲 Send to Splitwise")
             expense_name = st.text_input("Expense name", value="Sainsbury's")
 
-            # Summary box — sanity check before firing
-            summary_html = f'<div class="sw-summary">'
-            summary_html += f'<div class="sw-summary-row payer"><span>💳 Paid by</span><span>{payer} (£{grand/100:.2f})</span></div>'
+            # Summary — sanity check before firing
+            st.markdown(f"**💳 Paid by: {payer} (£{grand/100:.2f} total)**")
+            rows = {}
             for person in PEOPLE:
-                owed = final_totals[person] / 100
+                owed = f"£{final_totals[person] / 100:.2f}"
                 if person == payer:
-                    label = f"{person} owes themselves"
+                    rows[person] = f"{owed} (paid — keeps this)"
                 else:
-                    label = f"{person} owes {payer}"
-                summary_html += f'<div class="sw-summary-row"><span>{label}</span><span>£{owed:.2f}</span></div>'
-            summary_html += '</div>'
-            st.markdown(summary_html, unsafe_allow_html=True)
+                    rows[person] = f"{owed} (owes {payer})"
+            for person, detail in rows.items():
+                c1, c2 = st.columns([2, 3])
+                c1.markdown(f"**{person}**")
+                c2.markdown(detail)
+            st.divider()
 
             if not st.session_state.get("splitwise_sent"):
                 if st.button("➕ Create Splitwise Expense", type="primary", use_container_width=True):
