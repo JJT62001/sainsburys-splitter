@@ -293,28 +293,52 @@ else:
         n_items = len(st.session_state.receipt_items)
         st.caption(f"{n_items} items found — edit names/prices or delete anything wrong.")
 
-        if st.session_state.get("low_conf_count"):
-            st.warning(f"⚠️ {st.session_state.low_conf_count} item(s) flagged as uncertain — check the badges below.")
+        cleared   = st.session_state.get("cleared_items", set())
+        remaining = sum(
+            1 for i in st.session_state.receipt_items
+            if float(i.get("confidence", 1.0)) < 0.75 and i["id"] not in cleared
+        )
+        if remaining > 0:
+            st.warning(f"⚠️ {remaining} item(s) still need checking.")
+        elif st.session_state.get("low_conf_count"):
+            st.success("✅ All flagged items checked!")
+
+        # Track which items have been manually cleared
+        if "cleared_items" not in st.session_state:
+            st.session_state.cleared_items = set()
 
         updated_items = []
         for item in st.session_state.receipt_items:
-            item_id = item["id"]
-            conf    = float(item.get("confidence", 1.0))
-            badge   = (
+            item_id  = item["id"]
+            conf     = float(item.get("confidence", 1.0))
+            is_low   = conf < 0.75 and item_id not in st.session_state.cleared_items
+
+            badge = (
                 '<span class="badge-low">⚠ Check me</span>'
-                if conf < 0.75 else
+                if is_low else
                 '<span class="badge-ok">✓ Clear</span>'
             )
+
             cols   = st.columns([3, 2, 1, 1])
             name   = cols[0].text_input("Name", value=item.get("friendly_name", item["name"]), key=f"name_{item_id}", label_visibility="collapsed")
             cols[0].markdown(badge + f' <span style="color:#94a3b8;font-size:0.72rem">{item["name"]}</span>', unsafe_allow_html=True)
             price  = cols[1].number_input("Price", value=float(item["price"]), step=0.01,
                                           key=f"price_{item_id}", label_visibility="collapsed")
-            delete = cols[2].button("❌", key=f"delete_{item_id}")
+
+            # Show clear button only on flagged items, delete button on all
+            if is_low:
+                if cols[2].button("✓", key=f"clear_{item_id}", help="Mark as checked"):
+                    st.session_state.cleared_items.add(item_id)
+                    st.rerun()
+                delete = cols[3].button("❌", key=f"delete_{item_id}")
+            else:
+                delete = cols[2].button("❌", key=f"delete_{item_id}")
+
             if not delete:
                 updated_items.append({"id": item_id, "name": name, "price": price, "confidence": conf})
             else:
                 st.session_state.assignments.pop(item_id, None)
+                st.session_state.cleared_items.discard(item_id)
 
         st.session_state.receipt_items = updated_items
 
