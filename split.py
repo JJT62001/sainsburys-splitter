@@ -357,7 +357,7 @@ else:
 
         unassigned = sum(
             1 for item in st.session_state.receipt_items
-            if not st.session_state.assignments.get(item["id"], [])
+            if not st.session_state.get(f"split_{item['id']}", st.session_state.assignments.get(item["id"], PEOPLE[:]))
         )
         if unassigned > 0:
             st.warning(f"⚠️ {unassigned} item(s) have nobody assigned — they won't be included in the split.")
@@ -412,7 +412,14 @@ else:
         st.caption("Select the person who physically paid at the till — Splitwise will work out what everyone owes them.")
         payer = st.radio("Payer", PEOPLE, horizontal=True, label_visibility="collapsed")
 
-        if st.button("Calculate Split", type="primary", use_container_width=True):
+        # Nudge to recalculate if payer changed after a previous calculation
+        already_calculated = "final_totals" in st.session_state
+        payer_changed      = already_calculated and payer != st.session_state.get("payer")
+        if payer_changed:
+            st.warning("⚠️ Payer has changed — hit Recalculate to update the totals.")
+
+        btn_label = "🔄 Recalculate Split" if payer_changed else "Calculate Split"
+        if st.button(btn_label, type="primary", use_container_width=True):
             exact_totals = {p: 0.0 for p in PEOPLE}
             for item in st.session_state.receipt_items:
                 item_id = item["id"]
