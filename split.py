@@ -119,9 +119,21 @@ if uploaded_file:
             Correct output: {"name": "Yorkshire Tea Bags", "price": 2.00}
             WRONG output:   {"name": "Yorkshire Tea Bags", "price": 3.00}
 
+            CRITICAL - Cancelled items:
+            Some items are cancelled and appear as three lines: the item with a positive price, an "ITEM CANCELLED" line, then the same item with a negative price.
+            You MUST ignore all three lines entirely — do not include the item in the output at all.
+
+            Example on receipt:
+              Bread        2.00
+              ITEM CANCELLED
+              Bread       -2.00
+            Correct output: do not include Bread at all
+            WRONG output: {"name": "Bread", "price": 2.00} or {"name": "Bread", "price": 0.00}
+
             Rules:
             - Never include the Nectar saving line as its own item.
             - Always return the post-saving (cheaper) price, not the shelf price.
+            - Never include cancelled items or their reversal lines.
             - Ignore: Total, Subtotal, Bag charge, card payment, and change lines.
 
             For each item add a "confidence" field:
