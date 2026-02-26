@@ -107,13 +107,26 @@ if uploaded_file:
         with st.spinner("Gemini is reading the receipt..."):
 
             prompt = """
-            Extract items from this Sainsbury's receipt.
-            Always use the discounted Nectar price if available.
-            Ignore 'Total', 'Subtotal', 'Bag' and payment lines.
+            Extract items from this Sainsbury's receipt and return the FINAL price the customer actually paid for each item.
 
-            For each item also add a "confidence" field:
-              - 1.0 = you can clearly read the name and price
-              - 0.5 = you had to guess the name or price (blurry, cut off, ambiguous)
+            CRITICAL - Nectar / loyalty savings:
+            Some items are followed by a line saying "Nectar Price Saving", "Nectar Saver", or similar, with a NEGATIVE amount (e.g. -1.00).
+            You MUST subtract that saving from the item directly above it to get the real price paid.
+
+            Example on receipt:
+              Yorkshire Tea Bags      3.00
+              Nectar Price Saving    -1.00
+            Correct output: {"name": "Yorkshire Tea Bags", "price": 2.00}
+            WRONG output:   {"name": "Yorkshire Tea Bags", "price": 3.00}
+
+            Rules:
+            - Never include the Nectar saving line as its own item.
+            - Always return the post-saving (cheaper) price, not the shelf price.
+            - Ignore: Total, Subtotal, Bag charge, card payment, and change lines.
+
+            For each item add a "confidence" field:
+              - 1.0 = name and price are clearly legible
+              - 0.5 = name or price had to be guessed (blurry, cut off, ambiguous)
               - 0.0 = very uncertain
 
             Return ONLY a valid JSON list, no markdown, no extra text:
@@ -337,4 +350,3 @@ if "receipt_items" in st.session_state:
         grand = sum(final_totals.values())
         st.metric(label="🧾 Grand Total (all splits)", value=f"£{grand / 100:.2f}")
         st.caption("Add this to Splitwise and you're done! 🙌")
-
