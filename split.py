@@ -83,6 +83,7 @@ st.markdown("""
 # ==============================
 class ReceiptItem(BaseModel):
     name: str
+    friendly_name: str
     price: float
     confidence: float
 
@@ -243,6 +244,15 @@ if st.session_state.step == 0:
                       - 1.0 = name and price are clearly legible
                       - 0.5 = name or price had to be guessed (blurry, cut off, ambiguous)
                       - 0.0 = very uncertain
+
+                    Also add a friendly_name field: a short, human-readable version of the receipt name.
+                    Receipt names are often truncated codes — decode them into plain English.
+                    Examples:
+                      "chicken s cub x10"  → "Chicken Stock Cubes x10"
+                      "TTD SHNK BEEF"      → "Taste the Difference Beef Shank"
+                      "SO org chdr mtr"    → "Sainsbury's Organic Cheddar Mature"
+                      "WHLML Med LOAF"     → "Wholemeal Medium Loaf"
+                    If the name is already clear, just return it tidied up with correct capitalisation.
                     """
                     try:
                         response = client.models.generate_content(
@@ -296,8 +306,8 @@ else:
                 '<span class="badge-ok">✓ Clear</span>'
             )
             cols   = st.columns([3, 2, 1, 1])
-            name   = cols[0].text_input("Name", value=item["name"], key=f"name_{item_id}", label_visibility="collapsed")
-            cols[0].markdown(badge, unsafe_allow_html=True)
+            name   = cols[0].text_input("Name", value=item.get("friendly_name", item["name"]), key=f"name_{item_id}", label_visibility="collapsed")
+            cols[0].markdown(badge + f' <span style="color:#94a3b8;font-size:0.72rem">{item["name"]}</span>', unsafe_allow_html=True)
             price  = cols[1].number_input("Price", value=float(item["price"]), step=0.01,
                                           key=f"price_{item_id}", label_visibility="collapsed")
             delete = cols[2].button("❌", key=f"delete_{item_id}")
@@ -337,8 +347,12 @@ else:
             conf_badge = " ⚠️" if conf < 0.75 else ""
 
             cols = st.columns([3, 3, 1])
-            cols[0].markdown(f"**{item['name']}{conf_badge}** &nbsp; £{float(item['price']):.2f}",
-                             unsafe_allow_html=True)
+            display_name = item.get("friendly_name", item["name"])
+            cols[0].markdown(
+                f"**{display_name}{conf_badge}** &nbsp; £{float(item['price']):.2f}"
+                f'<br><span style="color:#94a3b8;font-size:0.72rem">{item["name"]}</span>',
+                unsafe_allow_html=True
+            )
 
             if cols[2].button("All", key=f"all_{item_id}"):
                 st.session_state[f"split_{item_id}"] = PEOPLE[:]
