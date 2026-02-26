@@ -344,9 +344,11 @@ if "receipt_items" in st.session_state:
             with st.spinner("Creating expense in Splitwise..."):
                 try:
                     result = create_splitwise_expense(expense_name, grand, payer, final_totals)
-                    if "expense" in result:
-                        exp = result["expense"]
-                        st.success(f"✅ Expense \"{exp['description']}\" added to Splitwise! {payer} paid £{grand/100:.2f}.")
+                    expenses = result.get("expenses", [])
+                    errors = result.get("errors", {})
+                    if expenses and not errors:
+                        exp = expenses[0]
+                        st.success(f"✅ '{exp['description']}' added to Splitwise! {payer} paid £{grand/100:.2f}.")
                     else:
                         st.error(f"Splitwise returned an error: {result}")
                 except Exception as e:
