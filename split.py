@@ -129,25 +129,6 @@ def render_stepper(current_step):
 with st.sidebar:
     st.header("⚙️ Settings")
 
-    st.subheader("AI Model")
-    model_option = st.selectbox(
-        "Gemini Model",
-        options=[
-            "gemini-2.5-flash — Best (250/day)",
-            "gemini-2.5-pro — Smarter (100/day)",
-            "gemini-2.5-flash-lite — Fastest (1000/day)",
-        ],
-        index=0,
-        help="Switch model if you hit the daily rate limit"
-    )
-    model_map = {
-        "gemini-2.5-flash — Best (250/day)":      "gemini-2.5-flash",
-        "gemini-2.5-pro — Smarter (100/day)":     "gemini-2.5-pro",
-        "gemini-2.5-flash-lite — Fastest (1000/day)": "gemini-2.5-flash-lite",
-    }
-    selected_model = model_map[model_option]
-
-    st.divider()
     st.subheader("Discounts")
     colleague_option = st.selectbox(
         "Colleague Discount",
@@ -259,7 +240,7 @@ if st.session_state.step == 0:
                     """
                     try:
                         response = client.models.generate_content(
-                            model=selected_model,
+                            model="gemini-2.5-flash",
                             contents=[prompt, img],
                             config={
                                 "response_mime_type": "application/json",
@@ -283,12 +264,7 @@ if st.session_state.step == 0:
                         st.session_state.low_conf_count = low_conf_count
                         st.rerun()
                     except Exception as e:
-                        err_str = str(e)
-                        if "429" in err_str or "quota" in err_str.lower() or "rate" in err_str.lower():
-                            st.error("🚫 Rate limit hit — you've used up today's free quota for this model.")
-                            st.warning("👈 Switch to a different model in the sidebar Settings and try again.")
-                        else:
-                            st.error(f"Error: {e}")
+                        st.error(f"Error: {e}")
 
 # ==============================
 # STEPS 1-3 — Main flow
