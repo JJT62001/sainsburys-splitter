@@ -124,6 +124,38 @@ def render_stepper(current_step):
     st.markdown(html, unsafe_allow_html=True)
 
 # ==============================
+# Image Preprocessing
+# ==============================
+def preprocess_receipt(img: Image.Image) -> Image.Image:
+    try:
+        # Greyscale - colour is noise for a black & white receipt
+        img = ImageOps.grayscale(img)
+
+        # Upscale if too small
+        min_height = 2000
+        if img.height < min_height:
+            scale = min_height / img.height
+            img = img.resize((int(img.width * scale), int(img.height * scale)), Image.LANCZOS)
+
+        # Cap size to avoid huge files
+        img.thumbnail((3000, 3000), Image.LANCZOS)
+
+        # Auto-level contrast
+        img = ImageOps.autocontrast(img, cutoff=2)
+
+        # Sharpen twice for crisp text edges
+        img = img.filter(ImageFilter.SHARPEN)
+        img = img.filter(ImageFilter.SHARPEN)
+
+        # Convert back to RGB for Gemini
+        img = img.convert("RGB")
+
+        return img
+    except Exception:
+        # If anything fails, return original image so the app still works
+        return img.convert("RGB") if img.mode != "RGB" else img
+
+# ==============================
 # Sidebar
 # ==============================
 with st.sidebar:
