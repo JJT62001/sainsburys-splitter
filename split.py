@@ -52,6 +52,16 @@ st.markdown("""
     .sw-summary-row.payer { font-weight: 700; color: #0f172a; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px; margin-bottom: 4px; }
 
     div[data-testid="stMetric"] { background: transparent !important; }
+
+    /* Person toggle buttons */
+    div[data-testid="stHorizontalBlock"] button[kind="secondary"].toggle-on {
+        background-color: #16a34a !important;
+        color: white !important;
+        border-color: #16a34a !important;
+    }
+    /* Active person pill */
+    .person-on  { display:inline-block; padding:4px 14px; border-radius:20px; font-weight:700; font-size:0.9rem; cursor:pointer; background:#16a34a; color:white;  border:2px solid #16a34a; margin:2px; }
+    .person-off { display:inline-block; padding:4px 14px; border-radius:20px; font-weight:700; font-size:0.9rem; cursor:pointer; background:transparent; color:#94a3b8; border:2px solid #334155; margin:2px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -390,36 +400,44 @@ else:
 
         unassigned = sum(
             1 for item in st.session_state.receipt_items
-            if not st.session_state.get(f"split_{item['id']}", st.session_state.assignments.get(item["id"], PEOPLE[:]))
+            if not any(st.session_state.get(f"toggle_{item['id']}", {p: True for p in PEOPLE}).values())
         )
         if unassigned > 0:
             st.warning(f"⚠️ {unassigned} item(s) have nobody assigned — they won't be included in the split.")
 
         for item in st.session_state.receipt_items:
-            item_id      = item["id"]
-            conf         = float(item.get("confidence", 1.0))
+            item_id       = item["id"]
+            conf          = float(item.get("confidence", 1.0))
             cleared_items = st.session_state.get("cleared_items", set())
-            conf_badge   = " ⚠️" if conf < 0.75 and item_id not in cleared_items else ""
-            display_name = item.get("friendly_name", item["name"])
+            conf_badge    = " ⚠️" if conf < 0.75 and item_id not in cleared_items else ""
+            display_name  = item.get("friendly_name", item["name"])
 
-            cols = st.columns([3, 3, 1])
+            # Seed toggle state on first render
+            toggle_key = f"toggle_{item_id}"
+            if toggle_key not in st.session_state:
+                st.session_state[toggle_key] = {
+                    p: True for p in PEOPLE
+                }
+
+            cols = st.columns([3, 1, 1, 1])
             cols[0].markdown(
                 f"**{display_name}{conf_badge}** &nbsp; £{float(item['price']):.2f}",
                 unsafe_allow_html=True
             )
 
-            if cols[2].button("All", key=f"all_{item_id}"):
-                st.session_state[f"split_{item_id}"] = PEOPLE[:]
+            # One toggle button per person
+            for i, person in enumerate(PEOPLE):
+                is_on = st.session_state[toggle_key][person]
+                label = f"{'✓ ' if is_on else ''}{person}"
+                btn_type = "primary" if is_on else "secondary"
+                if cols[i + 1].button(label, key=f"tog_{item_id}_{person}", type=btn_type, use_container_width=True):
+                    st.session_state[toggle_key][person] = not is_on
+                    st.rerun()
 
-            if f"split_{item_id}" not in st.session_state:
-                st.session_state[f"split_{item_id}"] = st.session_state.assignments.get(item_id, PEOPLE[:])
-
-            selected = cols[1].multiselect(
-                "Who's in?", PEOPLE,
-                key=f"split_{item_id}",
-                label_visibility="collapsed"
-            )
-            st.session_state.assignments[item_id] = selected
+            # Sync assignments from toggle state
+            st.session_state.assignments[item_id] = [
+                p for p in PEOPLE if st.session_state[toggle_key][p]
+            ]
 
         st.divider()
         nav = st.columns(2)
