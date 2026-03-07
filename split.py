@@ -422,6 +422,12 @@ else:
     elif st.session_state.step == 2:
         st.caption("Everyone is in by default — remove people from items they didn't share.")
 
+        # Seed all toggle states upfront before fragment renders
+        for item in st.session_state.receipt_items:
+            toggle_key = f"toggle_{item['id']}"
+            if toggle_key not in st.session_state:
+                st.session_state[toggle_key] = {p: True for p in PEOPLE}
+
         unassigned = sum(
             1 for item in st.session_state.receipt_items
             if not any(st.session_state.get(f"toggle_{item['id']}", {p: True for p in PEOPLE}).values())
@@ -429,19 +435,14 @@ else:
         if unassigned > 0:
             st.warning(f"⚠️ {unassigned} item(s) have nobody assigned — they won't be included in the split.")
 
-        for item in st.session_state.receipt_items:
-            item_id       = item["id"]
-            conf          = float(item.get("confidence", 1.0))
+        @st.fragment
+        def render_item_toggle(item):
+            item_id      = item["id"]
+            conf         = float(item.get("confidence", 1.0))
             cleared_items = st.session_state.get("cleared_items", set())
-            conf_badge    = " ⚠️" if conf < 0.75 and item_id not in cleared_items else ""
-            display_name  = item.get("friendly_name", item["name"])
-
-            # Seed toggle state on first render
-            toggle_key = f"toggle_{item_id}"
-            if toggle_key not in st.session_state:
-                st.session_state[toggle_key] = {
-                    p: True for p in PEOPLE
-                }
+            conf_badge   = " ⚠️" if conf < 0.75 and item_id not in cleared_items else ""
+            display_name = item.get("friendly_name", item["name"])
+            toggle_key   = f"toggle_{item_id}"
 
             cols = st.columns([3, 1, 1, 1])
             cols[0].markdown(
@@ -449,19 +450,24 @@ else:
                 unsafe_allow_html=True
             )
 
-            # One toggle button per person
             for i, person in enumerate(PEOPLE):
-                is_on = st.session_state[toggle_key][person]
-                label = f"{'✓ ' if is_on else ''}{person}"
+                is_on    = st.session_state[toggle_key][person]
+                label    = f"{'✓ ' if is_on else ''}{person}"
                 btn_type = "primary" if is_on else "secondary"
                 if cols[i + 1].button(label, key=f"tog_{item_id}_{person}", type=btn_type, use_container_width=True):
                     st.session_state[toggle_key][person] = not is_on
+                    st.session_state.assignments[item_id] = [
+                        p for p in PEOPLE if st.session_state[toggle_key][p]
+                    ]
                     st.rerun()
 
-            # Sync assignments from toggle state
+            # Sync assignments on every render
             st.session_state.assignments[item_id] = [
                 p for p in PEOPLE if st.session_state[toggle_key][p]
             ]
+
+        for item in st.session_state.receipt_items:
+            render_item_toggle(item)
 
         st.divider()
         nav = st.columns(2)
