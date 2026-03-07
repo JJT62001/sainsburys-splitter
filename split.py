@@ -236,62 +236,85 @@ if st.session_state.step == 0:
         st.markdown("#### Receipt uploaded ✓")
         st.caption("The processed version is greyscaled, sharpened and contrast-enhanced — this is what Gemini will read.")
         if st.button("🔍 Analyse Receipt", type="primary", use_container_width=True):
-            with st.spinner("Gemini is reading the receipt..."):
-                prompt = """
-                    Extract items from this Sainsbury's receipt and return the FINAL price the customer actually paid for each item.
+            try:
+                # ── PASS 1: Extract raw text from image ──────────────────────
+                with st.spinner("Reading receipt text..."):
+                    ocr_prompt = """Transcribe every line of this receipt exactly as printed.
+Preserve the original layout — one line per item.
+Include ALL lines: item names, prices, Nectar savings, ITEM CANCELLED lines, totals, everything.
+Do not interpret, skip, or summarise anything. Just output the raw text."""
 
-                    CRITICAL - Nectar / loyalty savings:
-                    Some items are followed by a line saying "Nectar Price Saving", "Nectar Saver", or similar, with a NEGATIVE amount (e.g. -1.00).
-                    You MUST subtract that saving from the item directly above it to get the real price paid.
-
-                    Example on receipt:
-                      Yorkshire Tea Bags      3.00
-                      Nectar Price Saving    -1.00
-                    Correct output: {"name": "Yorkshire Tea Bags", "price": 2.00}
-                    WRONG output:   {"name": "Yorkshire Tea Bags", "price": 3.00}
-
-                    CRITICAL - Cancelled items:
-                    Some items are cancelled and appear as three lines: the item with a positive price, an "ITEM CANCELLED" line, then the same item with a negative price.
-                    You MUST ignore all three lines entirely — do not include the item in the output at all.
-
-                    Example on receipt:
-                      Bread        2.00
-                      ITEM CANCELLED
-                      Bread       -2.00
-                    Correct output: do not include Bread at all
-                    WRONG output: {"name": "Bread", "price": 2.00} or {"name": "Bread", "price": 0.00}
-
-                    Rules:
-                    - Never include the Nectar saving line as its own item.
-                    - Always return the post-saving (cheaper) price, not the shelf price.
-                    - Never include cancelled items or their reversal lines.
-                    - Ignore: Total, Subtotal, Bag charge, card payment, and change lines.
-
-                    For each item add a confidence field:
-                      - 1.0 = name and price are clearly legible
-                      - 0.5 = name or price had to be guessed (blurry, cut off, ambiguous)
-                      - 0.0 = very uncertain
-
-                    Also add a friendly_name field: a short, human-readable version of the receipt name.
-                    Receipt names are often truncated codes — decode them into plain English.
-                    Examples:
-                      "chicken s cub x10"  → "Chicken Stock Cubes x10"
-                      "TTD SHNK BEEF"      → "Taste the Difference Beef Shank"
-                      "SO org chdr mtr"    → "Sainsbury's Organic Cheddar Mature"
-                      "WHLML Med LOAF"     → "Wholemeal Medium Loaf"
-                    If the name is already clear, just return it tidied up with correct capitalisation.
-                    """
-                try:
-                    response = client.models.generate_content(
+                    ocr_response = client.models.generate_content(
                         model="gemini-2.5-flash",
-                        contents=[prompt, processed_img],
+                        contents=[ocr_prompt, processed_img],
+                        config={"temperature": 0.0}
+                    )
+                    raw_text = ocr_response.text.strip()
+
+                # ── PASS 2: Interpret the raw text into structured items ──────
+                with st.spinner("Interpreting items..."):
+                    parse_prompt = f"""You are parsing a Sainsbury's receipt. Here is the exact text extracted from it:
+
+<receipt>
+{raw_text}
+</receipt>
+
+Your job is to return the FINAL price each item cost after all discounts.
+
+RULE 1 — Nectar / loyalty savings:
+A "Nectar Price Saving" or "Nectar Saver" line with a NEGATIVE value immediately follows the item it applies to.
+Subtract it from that item. Never include the saving line as its own item.
+
+Example:
+  TTD EASY PEEL 600G    2.50
+  Nectar Price Saving  -0.75
+Output: name="TTD EASY PEEL 600G", price=1.75
+
+RULE 2 — Cancelled items:
+Three lines: item + positive price, then "ITEM CANCELLED", then same item + negative price.
+Omit all three lines entirely.
+
+Example:
+  JS SOURDOUGH BAG    2.00
+  ITEM CANCELLED
+  JS SOURDOUGH BAG   -2.00
+Output: omit entirely
+
+RULE 3 — Multibuy / promotional discounts:
+Sometimes a discount line appears after a group of items, e.g. "Partbaked 2 for 3" with a negative value like -1.00.
+This means the discount applies across those items. Deduct it from the last item before the discount line.
+
+Example:
+  TTD 4 BAKE WHTE ROLL   2.00
+  TTD 4 BAKE WHTE ROLL   2.00
+  Partbaked 2 for 3      -1.00
+Output: first roll price=2.00, second roll price=1.00
+
+RULE 4 — Duplicate items:
+If the same item appears multiple times at the same price, include each as a separate entry.
+
+RULE 5 — Ignore these lines entirely:
+Balance Due, Total, Subtotal, Colleague Discount, card payment, change, cashier messages,
+and age verification lines (e.g. "THINK 25 Cashier Confirmed Over 18").
+NOTE: Lines starting with * are age-restricted items (e.g. alcohol, medication) — include them as normal items, just strip the * from the name.
+
+For each item return:
+- name: exact receipt text
+- friendly_name: human-readable English version (decode abbreviations, e.g. "JS CHK BRST FIL 320G" → "Chicken Breast Fillets 320g")
+- price: final price after all applicable discounts
+- confidence: 1.0 if certain, 0.5 if unsure about name or price, 0.0 if very uncertain
+"""
+
+                    parse_response = client.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=[parse_prompt],
                         config={
                             "response_mime_type": "application/json",
                             "response_schema": list[ReceiptItem],
-                            "temperature": 0.1,
+                            "temperature": 0.0,
                         }
                     )
-                    items = json.loads(response.text)
+                    items = json.loads(parse_response.text)
                     st.session_state.receipt_items = []
                     st.session_state.assignments   = {}
                     st.session_state.cleared_items = set()
@@ -306,8 +329,9 @@ if st.session_state.step == 0:
                     st.session_state.step           = 1
                     st.session_state.low_conf_count = low_conf_count
                     st.rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
+
+            except Exception as e:
+                st.error(f"Error: {e}")
 
 # ==============================
 # STEPS 1-3 — Main flow
