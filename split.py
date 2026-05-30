@@ -43,14 +43,6 @@ st.markdown("""
     .badge-low { background:#fef3c7; color:#92400e; border:1px solid #fcd34d; border-radius:4px; padding:1px 6px; font-size:0.75rem; font-weight:600; }
     .badge-ok  { background:#dcfce7; color:#166534; border:1px solid #86efac; border-radius:4px; padding:1px 6px; font-size:0.75rem; font-weight:600; }
 
-    /* Splitwise summary box */
-    .sw-summary {
-        background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
-        padding: 16px 20px; margin-bottom: 16px;
-    }
-    .sw-summary-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 0.95rem; }
-    .sw-summary-row.payer { font-weight: 700; color: #0f172a; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px; margin-bottom: 4px; }
-
     div[data-testid="stMetric"] { background: transparent !important; }
 
     /* Person toggle buttons */
@@ -59,7 +51,6 @@ st.markdown("""
         color: white !important;
         border-color: #16a34a !important;
     }
-    /* Active person pill */
     .person-on  { display:inline-block; padding:4px 14px; border-radius:20px; font-weight:700; font-size:0.9rem; cursor:pointer; background:#16a34a; color:white;  border:2px solid #16a34a; margin:2px; }
     .person-off { display:inline-block; padding:4px 14px; border-radius:20px; font-weight:700; font-size:0.9rem; cursor:pointer; background:transparent; color:#94a3b8; border:2px solid #334155; margin:2px; }
 </style>
@@ -138,31 +129,17 @@ def render_stepper(current_step):
 # ==============================
 def preprocess_receipt(img: Image.Image) -> Image.Image:
     try:
-        # Greyscale - colour is noise for a black & white receipt
         img = ImageOps.grayscale(img)
-
-        # Upscale if too small
         min_height = 2000
         if img.height < min_height:
             scale = min_height / img.height
             img = img.resize((int(img.width * scale), int(img.height * scale)), Image.LANCZOS)
-
-        # Cap size to avoid huge files
         img.thumbnail((3000, 3000), Image.LANCZOS)
-
-        # Auto-level contrast
         img = ImageOps.autocontrast(img, cutoff=2)
-
-        # Sharpen twice for crisp text edges
         img = img.filter(ImageFilter.SHARPEN)
         img = img.filter(ImageFilter.SHARPEN)
-
-        # Convert back to RGB for Gemini
-        img = img.convert("RGB")
-
-        return img
+        return img.convert("RGB")
     except Exception:
-        # If anything fails, return original image so the app still works
         return img.convert("RGB") if img.mode != "RGB" else img
 
 # ==============================
@@ -213,47 +190,174 @@ with st.sidebar:
 # ==============================
 if "step" not in st.session_state:
     st.session_state.step = 0
+if "mode" not in st.session_state:
+    st.session_state.mode = "receipt"
 
 # ==============================
-# Header
+# Header + Mode Switcher
 # ==============================
-st.title("🛒 Joe, Nic & Nat's Sainsbury's Splitter")
+st.title("🛒 Joe, Nic & Nat's Splitter")
+
+col_a, col_b, _ = st.columns([1, 1, 3])
+if col_a.button(
+    "🛒 Receipt Split",
+    type="primary" if st.session_state.mode == "receipt" else "secondary",
+    use_container_width=True,
+):
+    st.session_state.mode = "receipt"
+    st.rerun()
+if col_b.button(
+    "➕ Quick Expense",
+    type="primary" if st.session_state.mode == "quick" else "secondary",
+    use_container_width=True,
+):
+    st.session_state.mode = "quick"
+    st.rerun()
+
+st.divider()
 
 # ==============================
-# STEP 0 — Upload & Scan
+# QUICK EXPENSE MODE
 # ==============================
-if st.session_state.step == 0:
-    uploaded_file = st.file_uploader("Upload Receipt Photo", type=["jpg", "jpeg", "png"])
+if st.session_state.mode == "quick":
 
-    if uploaded_file:
-        img = Image.open(uploaded_file)
-        processed_img = preprocess_receipt(img)
+    st.subheader("➕ Quick Expense")
+    st.caption("Add a Splitwise expense directly — no receipt needed.")
 
-        col1, col2 = st.columns(2)
-        col1.image(img, caption="📷 Original", use_container_width=True)
-        col2.image(processed_img, caption="✨ Processed (what Gemini sees)", use_container_width=True)
+    if "qe_sent" not in st.session_state:
+        st.session_state.qe_sent = False
 
-        st.markdown("#### Receipt uploaded ✓")
-        st.caption("The processed version is greyscaled, sharpened and contrast-enhanced — this is what Gemini will read.")
-        if st.button("🔍 Analyse Receipt", type="primary", use_container_width=True):
-            try:
-                # ── PASS 1: Extract raw text from image ──────────────────────
-                with st.spinner("Reading receipt text..."):
-                    ocr_prompt = """Transcribe every line of this receipt exactly as printed.
+    if not st.session_state.qe_sent:
+
+        qe_desc  = st.text_input("Description", placeholder="e.g. Pizza, Netflix, Petrol...")
+        qe_total = st.number_input("Total Amount (£)", min_value=0.01, step=0.01, value=10.00)
+
+        st.markdown("**Who's splitting this?**")
+        st.caption("Everyone is in by default — deselect anyone not involved.")
+
+        # Toggle state for quick expense
+        if "qe_toggles" not in st.session_state:
+            st.session_state.qe_toggles = {p: True for p in PEOPLE}
+
+        tcols = st.columns(len(PEOPLE))
+        for i, person in enumerate(PEOPLE):
+            is_on    = st.session_state.qe_toggles[person]
+            label    = f"{'✓ ' if is_on else ''}{person}"
+            btn_type = "primary" if is_on else "secondary"
+            if tcols[i].button(label, key=f"qe_tog_{person}", type=btn_type, use_container_width=True):
+                st.session_state.qe_toggles[person] = not is_on
+                st.rerun()
+
+        splitting = [p for p in PEOPLE if st.session_state.qe_toggles[p]]
+
+        if not splitting:
+            st.warning("⚠️ Nobody is selected — add at least one person.")
+        else:
+            # Live preview of shares
+            share_pennies = round(qe_total * 100) // len(splitting)
+            remainder     = round(qe_total * 100) % len(splitting)
+            st.caption(f"Each person pays roughly £{share_pennies / 100:.2f}" +
+                       (f" (±1p rounding)" if remainder else ""))
+
+        st.markdown("**Who paid?**")
+        qe_payer = st.radio("Payer", PEOPLE, horizontal=True, label_visibility="collapsed")
+
+        st.divider()
+
+        # Summary before sending
+        if splitting:
+            st.markdown(f"**💳 Paid by: {qe_payer} (£{qe_total:.2f} total)**")
+            total_pennies = round(qe_total * 100)
+            share         = total_pennies // len(splitting)
+            remainder     = total_pennies % len(splitting)
+            shares        = {p: share for p in splitting}
+            # Distribute remainder penny by penny to first person(s)
+            for p in splitting[:remainder]:
+                shares[p] += 1
+            # Zero out anyone not splitting
+            for p in PEOPLE:
+                if p not in splitting:
+                    shares[p] = 0
+
+            for person in PEOPLE:
+                c1, c2 = st.columns([2, 3])
+                c1.markdown(f"**{person}**")
+                if person not in splitting:
+                    c2.markdown("*not splitting*")
+                elif person == qe_payer:
+                    c2.markdown(f"£{shares[person] / 100:.2f} (paid — keeps this)")
+                else:
+                    c2.markdown(f"£{shares[person] / 100:.2f} (owes {qe_payer})")
+
+            st.divider()
+
+            if st.button("➕ Create Splitwise Expense", type="primary", use_container_width=True):
+                if not qe_desc.strip():
+                    st.warning("Please enter a description.")
+                else:
+                    with st.spinner("Sending to Splitwise..."):
+                        try:
+                            result   = create_splitwise_expense(qe_desc, total_pennies, qe_payer, shares)
+                            expenses = result.get("expenses", [])
+                            errors   = result.get("errors", {})
+                            if expenses and not errors:
+                                st.session_state.qe_sent      = True
+                                st.session_state.qe_last_desc = qe_desc
+                                st.session_state.qe_last_total = qe_total
+                                st.session_state.qe_last_payer = qe_payer
+                                st.rerun()
+                            else:
+                                st.error(f"Splitwise error: {result}")
+                        except Exception as e:
+                            st.error(f"Failed: {e}")
+    else:
+        st.success(
+            f"✅ '{st.session_state.qe_last_desc}' added to Splitwise! "
+            f"{st.session_state.qe_last_payer} paid £{st.session_state.qe_last_total:.2f}."
+        )
+        st.balloons()
+        if st.button("➕ Add Another Expense", type="primary", use_container_width=True):
+            st.session_state.qe_sent    = False
+            st.session_state.qe_toggles = {p: True for p in PEOPLE}
+            st.rerun()
+
+# ==============================
+# RECEIPT SPLIT MODE
+# ==============================
+else:
+
+    # ---- STEP 0: Upload & Scan ----
+    if st.session_state.step == 0:
+        uploaded_file = st.file_uploader("Upload Receipt Photo", type=["jpg", "jpeg", "png"])
+
+        if uploaded_file:
+            img = Image.open(uploaded_file)
+            processed_img = preprocess_receipt(img)
+
+            col1, col2 = st.columns(2)
+            col1.image(img, caption="📷 Original", use_container_width=True)
+            col2.image(processed_img, caption="✨ Processed (what Gemini sees)", use_container_width=True)
+
+            st.markdown("#### Receipt uploaded ✓")
+            st.caption("The processed version is greyscaled, sharpened and contrast-enhanced — this is what Gemini will read.")
+            if st.button("🔍 Analyse Receipt", type="primary", use_container_width=True):
+                try:
+                    with st.spinner("Reading receipt text..."):
+                        ocr_response = client.models.generate_content(
+                            model="gemini-2.5-flash",
+                            contents=[
+                                """Transcribe every line of this receipt exactly as printed.
 Preserve the original layout — one line per item.
 Include ALL lines: item names, prices, Nectar savings, ITEM CANCELLED lines, totals, everything.
-Do not interpret, skip, or summarise anything. Just output the raw text."""
+Do not interpret, skip, or summarise anything. Just output the raw text.""",
+                                processed_img,
+                            ],
+                            config={"temperature": 0.0}
+                        )
+                        raw_text = ocr_response.text.strip()
 
-                    ocr_response = client.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=[ocr_prompt, processed_img],
-                        config={"temperature": 0.0}
-                    )
-                    raw_text = ocr_response.text.strip()
-
-                # ── PASS 2: Interpret the raw text into structured items ──────
-                with st.spinner("Interpreting items..."):
-                    parse_prompt = f"""You are parsing a Sainsbury's receipt. Here is the exact text extracted from it:
+                    with st.spinner("Interpreting items..."):
+                        parse_prompt = f"""You are parsing a Sainsbury's receipt. Here is the exact text extracted from it:
 
 <receipt>
 {raw_text}
@@ -296,297 +400,282 @@ If the same item appears multiple times at the same price, include each as a sep
 RULE 5 — Ignore these lines entirely:
 Balance Due, Total, Subtotal, Colleague Discount, card payment, change, cashier messages,
 and age verification lines (e.g. "THINK 25 Cashier Confirmed Over 18").
-NOTE: Lines starting with * are age-restricted items (e.g. alcohol, medication) — include them as normal items, just strip the * from the name.
+
+RULE 6 — Lines starting with *:
+These are age-restricted items (alcohol, medication) — include them as normal, strip the * from the name.
 
 For each item return:
 - name: exact receipt text
-- friendly_name: human-readable English version (decode abbreviations, e.g. "JS CHK BRST FIL 320G" → "Chicken Breast Fillets 320g")
+- friendly_name: human-readable English version (decode abbreviations, e.g. "JS CHK BRST FIL 320G" -> "Chicken Breast Fillets 320g")
 - price: final price after all applicable discounts
 - confidence: 1.0 if certain, 0.5 if unsure about name or price, 0.0 if very uncertain
 """
+                        parse_response = client.models.generate_content(
+                            model="gemini-2.5-flash",
+                            contents=[parse_prompt],
+                            config={
+                                "response_mime_type": "application/json",
+                                "response_schema": list[ReceiptItem],
+                                "temperature": 0.0,
+                            }
+                        )
+                        items = json.loads(parse_response.text)
+                        st.session_state.receipt_items = []
+                        st.session_state.assignments   = {}
+                        st.session_state.cleared_items = set()
+                        low_conf_count = 0
+                        for item in items:
+                            item_id    = str(uuid.uuid4())
+                            item["id"] = item_id
+                            st.session_state.receipt_items.append(item)
+                            st.session_state.assignments[item_id] = PEOPLE[:]
+                            if item.get("confidence", 1.0) < 0.75:
+                                low_conf_count += 1
+                        st.session_state.step           = 1
+                        st.session_state.low_conf_count = low_conf_count
+                        st.rerun()
 
-                    parse_response = client.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=[parse_prompt],
-                        config={
-                            "response_mime_type": "application/json",
-                            "response_schema": list[ReceiptItem],
-                            "temperature": 0.0,
-                        }
-                    )
-                    items = json.loads(parse_response.text)
-                    st.session_state.receipt_items = []
-                    st.session_state.assignments   = {}
-                    st.session_state.cleared_items = set()
-                    low_conf_count = 0
-                    for item in items:
-                        item_id    = str(uuid.uuid4())
-                        item["id"] = item_id
-                        st.session_state.receipt_items.append(item)
-                        st.session_state.assignments[item_id] = PEOPLE[:]
-                        if item.get("confidence", 1.0) < 0.75:
-                            low_conf_count += 1
-                    st.session_state.step           = 1
-                    st.session_state.low_conf_count = low_conf_count
-                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
 
-            except Exception as e:
-                st.error(f"Error: {e}")
+    # ---- STEPS 1-3 ----
+    else:
+        render_stepper(st.session_state.step)
 
-# ==============================
-# STEPS 1-3 — Main flow
-# ==============================
-else:
-    render_stepper(st.session_state.step)
+        # ---- STEP 1: Review ----
+        if st.session_state.step == 1:
+            n_items = len(st.session_state.receipt_items)
+            st.caption(f"{n_items} items found — check the names and prices, fix anything that looks off, then move on.")
 
-    # ---- STEP 1: Review ----
-    if st.session_state.step == 1:
-        n_items = len(st.session_state.receipt_items)
-        st.caption(f"{n_items} items found — check the names and prices, fix anything that looks off, then move on.")
+            if "cleared_items" not in st.session_state:
+                st.session_state.cleared_items = set()
 
-        if "cleared_items" not in st.session_state:
-            st.session_state.cleared_items = set()
-
-        cleared   = st.session_state.cleared_items
-        remaining = sum(
-            1 for i in st.session_state.receipt_items
-            if float(i.get("confidence", 1.0)) < 0.75 and i["id"] not in cleared
-        )
-        if remaining > 0:
-            st.warning(f"⚠️ {remaining} item(s) look uncertain — check the amber badges before moving on.")
-        elif st.session_state.get("low_conf_count", 0) > 0:
-            st.success("✅ All flagged items checked — looking good!")
-
-        updated_items = []
-        for item in st.session_state.receipt_items:
-            item_id = item["id"]
-            conf    = float(item.get("confidence", 1.0))
-            is_low  = conf < 0.75 and item_id not in cleared
-
-            badge = (
-                '<span class="badge-low">⚠ Check me</span>'
-                if is_low else
-                '<span class="badge-ok">✓ Clear</span>'
+            cleared   = st.session_state.cleared_items
+            remaining = sum(
+                1 for i in st.session_state.receipt_items
+                if float(i.get("confidence", 1.0)) < 0.75 and i["id"] not in cleared
             )
+            if remaining > 0:
+                st.warning(f"⚠️ {remaining} item(s) look uncertain — check the amber badges before moving on.")
+            elif st.session_state.get("low_conf_count", 0) > 0:
+                st.success("✅ All flagged items checked — looking good!")
 
-            # Only show receipt code in grey on flagged items — it's noise once verified
-            sub = f' <span style="color:#94a3b8;font-size:0.72rem">{item["name"]}</span>' if is_low else ""
-
-            cols  = st.columns([3, 2, 1, 1])
-            name  = cols[0].text_input("Name", value=item.get("friendly_name", item["name"]),
-                                       key=f"name_{item_id}", label_visibility="collapsed")
-            cols[0].markdown(badge + sub, unsafe_allow_html=True)
-            price = cols[1].number_input("Price", value=float(item["price"]), step=0.01,
-                                         key=f"price_{item_id}", label_visibility="collapsed")
-
-            if is_low:
-                if cols[2].button("✓", key=f"clear_{item_id}", help="Mark as checked"):
-                    st.session_state.cleared_items.add(item_id)
-                    st.rerun()
-                delete = cols[3].button("❌", key=f"delete_{item_id}")
-            else:
-                delete = cols[2].button("❌", key=f"delete_{item_id}")
-
-            if not delete:
-                updated_items.append({"id": item_id, "name": item["name"],
-                                      "friendly_name": name, "price": price, "confidence": conf})
-            else:
-                st.session_state.assignments.pop(item_id, None)
-                st.session_state.cleared_items.discard(item_id)
-
-        st.session_state.receipt_items = updated_items
-
-        st.divider()
-        st.markdown("**➕ Add missing item**")
-        c1, c2, c3 = st.columns([3, 2, 1])
-        new_name  = c1.text_input("Item name", label_visibility="collapsed", placeholder="Item name")
-        new_price = c2.number_input("Price", min_value=0.0, step=0.01, label_visibility="collapsed")
-        if c3.button("Add"):
-            if new_name:
-                new_id = str(uuid.uuid4())
-                st.session_state.receipt_items.append({
-                    "id": new_id, "name": new_name, "friendly_name": new_name,
-                    "price": new_price, "confidence": 1.0
-                })
-                st.session_state.assignments[new_id] = PEOPLE[:]
-                st.rerun()
-            else:
-                st.warning("Enter an item name.")
-
-        st.divider()
-        if st.button("Next → Split Items", type="primary", use_container_width=True):
-            st.session_state.step = 2
-            st.rerun()
-
-    # ---- STEP 2: Split ----
-    elif st.session_state.step == 2:
-        st.caption("Everyone is in by default — remove people from items they didn't share.")
-
-        # Seed all toggle states upfront before fragment renders
-        for item in st.session_state.receipt_items:
-            toggle_key = f"toggle_{item['id']}"
-            if toggle_key not in st.session_state:
-                st.session_state[toggle_key] = {p: True for p in PEOPLE}
-
-        unassigned = sum(
-            1 for item in st.session_state.receipt_items
-            if not any(st.session_state.get(f"toggle_{item['id']}", {p: True for p in PEOPLE}).values())
-        )
-        if unassigned > 0:
-            st.warning(f"⚠️ {unassigned} item(s) have nobody assigned — they won't be included in the split.")
-
-        @st.fragment
-        def render_item_toggle(item):
-            item_id      = item["id"]
-            conf         = float(item.get("confidence", 1.0))
-            cleared_items = st.session_state.get("cleared_items", set())
-            conf_badge   = " ⚠️" if conf < 0.75 and item_id not in cleared_items else ""
-            display_name = item.get("friendly_name", item["name"])
-            toggle_key   = f"toggle_{item_id}"
-
-            cols = st.columns([3, 1, 1, 1])
-            cols[0].markdown(
-                f"**{display_name}{conf_badge}** &nbsp; £{float(item['price']):.2f}",
-                unsafe_allow_html=True
-            )
-
-            for i, person in enumerate(PEOPLE):
-                is_on    = st.session_state[toggle_key][person]
-                label    = f"{'✓ ' if is_on else ''}{person}"
-                btn_type = "primary" if is_on else "secondary"
-                if cols[i + 1].button(label, key=f"tog_{item_id}_{person}", type=btn_type, use_container_width=True):
-                    st.session_state[toggle_key][person] = not is_on
-                    st.session_state.assignments[item_id] = [
-                        p for p in PEOPLE if st.session_state[toggle_key][p]
-                    ]
-                    st.rerun()
-
-            # Sync assignments on every render
-            st.session_state.assignments[item_id] = [
-                p for p in PEOPLE if st.session_state[toggle_key][p]
-            ]
-
-        for item in st.session_state.receipt_items:
-            render_item_toggle(item)
-
-        st.divider()
-        nav = st.columns(2)
-        if nav[0].button("← Back to Review", use_container_width=True):
-            st.session_state.step = 1
-            st.rerun()
-        if nav[1].button("Next → Finalise", type="primary", use_container_width=True):
-            st.session_state.step = 3
-            st.rerun()
-
-    # ---- STEP 3: Finalise ----
-    elif st.session_state.step == 3:
-
-        # Discount reminder
-        discount_parts = []
-        if colleague_discount > 0:
-            discount_parts.append(f"{colleague_discount:.0f}% colleague discount")
-        if extra_discount > 0:
-            discount_parts.append(f"{extra_discount:.0f}% extra discount")
-        if discount_parts:
-            st.info(f"🏷️ {' + '.join(discount_parts)} will be applied to the totals below.")
-
-        st.subheader("Who paid today?")
-        st.caption("Select the person who physically paid at the till — Splitwise will work out what everyone owes them.")
-        payer = st.radio("Payer", PEOPLE, horizontal=True, label_visibility="collapsed")
-
-        # Nudge to recalculate if payer changed after a previous calculation
-        already_calculated = "final_totals" in st.session_state
-        discount_changed = (
-            already_calculated and (
-                colleague_discount != st.session_state.get("calculated_colleague") or
-                extra_discount     != st.session_state.get("calculated_extra")
-            )
-        )
-        payer_changed = already_calculated and payer != st.session_state.get("calculated_payer")
-        needs_recalc  = payer_changed or discount_changed
-
-        if payer_changed:
-            st.warning("⚠️ Payer has changed — hit Recalculate to update the totals.")
-        if discount_changed:
-            st.warning("⚠️ Discount has changed — hit Recalculate to update the totals.")
-
-        btn_label = "🔄 Recalculate Split" if needs_recalc else "Calculate Split"
-        if st.button(btn_label, type="primary", use_container_width=True):
-            exact_totals = {p: 0.0 for p in PEOPLE}
+            updated_items = []
             for item in st.session_state.receipt_items:
                 item_id = item["id"]
-                split   = st.session_state.assignments.get(item_id, [])
-                if not split:
-                    continue
-                price = discounted_price(float(item["price"]), colleague_discount, extra_discount)
-                share = price / len(split)
-                for person in split:
-                    exact_totals[person] += share
-            final_totals = {p: round(v * 100) for p, v in exact_totals.items()}
-            st.session_state.final_totals              = final_totals
-            st.session_state.payer                     = payer
-            st.session_state.calculated_payer          = payer
-            st.session_state.calculated_colleague      = colleague_discount
-            st.session_state.calculated_extra          = extra_discount
-            st.session_state.splitwise_sent            = False
-            st.session_state.balloons_shown            = False
+                conf    = float(item.get("confidence", 1.0))
+                is_low  = conf < 0.75 and item_id not in cleared
 
-        if "final_totals" in st.session_state:
-            final_totals = st.session_state.final_totals
-            payer        = st.session_state.payer
-            grand        = sum(final_totals.values())
+                badge = (
+                    '<span class="badge-low">⚠ Check me</span>'
+                    if is_low else
+                    '<span class="badge-ok">✓ Clear</span>'
+                )
+                sub = f' <span style="color:#94a3b8;font-size:0.72rem">{item["name"]}</span>' if is_low else ""
 
-            st.divider()
-            cols = st.columns(len(PEOPLE))
-            for col, person in zip(cols, PEOPLE):
-                col.metric(label=person, value=f"£{final_totals[person] / 100:.2f}")
-            st.metric(label="🧾 Grand Total", value=f"£{grand / 100:.2f}")
+                cols  = st.columns([3, 2, 1, 1])
+                name  = cols[0].text_input("Name", value=item.get("friendly_name", item["name"]),
+                                           key=f"name_{item_id}", label_visibility="collapsed")
+                cols[0].markdown(badge + sub, unsafe_allow_html=True)
+                price = cols[1].number_input("Price", value=float(item["price"]), step=0.01,
+                                             key=f"price_{item_id}", label_visibility="collapsed")
 
-            st.divider()
-            st.subheader("📲 Send to Splitwise")
-            expense_name = st.text_input("Expense name", value="Sainsbury's")
-
-            # Summary — sanity check before firing
-            st.markdown(f"**💳 Paid by: {payer} (£{grand/100:.2f} total)**")
-            rows = {}
-            for person in PEOPLE:
-                owed = f"£{final_totals[person] / 100:.2f}"
-                if person == payer:
-                    rows[person] = f"{owed} (paid — keeps this)"
+                if is_low:
+                    if cols[2].button("✓", key=f"clear_{item_id}", help="Mark as checked"):
+                        st.session_state.cleared_items.add(item_id)
+                        st.rerun()
+                    delete = cols[3].button("❌", key=f"delete_{item_id}")
                 else:
-                    rows[person] = f"{owed} (owes {payer})"
-            for person, detail in rows.items():
-                c1, c2 = st.columns([2, 3])
-                c1.markdown(f"**{person}**")
-                c2.markdown(detail)
+                    delete = cols[2].button("❌", key=f"delete_{item_id}")
+
+                if not delete:
+                    updated_items.append({"id": item_id, "name": item["name"],
+                                          "friendly_name": name, "price": price, "confidence": conf})
+                else:
+                    st.session_state.assignments.pop(item_id, None)
+                    st.session_state.cleared_items.discard(item_id)
+
+            st.session_state.receipt_items = updated_items
+
             st.divider()
-
-            if not st.session_state.get("splitwise_sent"):
-                if st.button("➕ Create Splitwise Expense", type="primary", use_container_width=True):
-                    with st.spinner("Sending to Splitwise..."):
-                        try:
-                            result   = create_splitwise_expense(expense_name, grand, payer, final_totals)
-                            expenses = result.get("expenses", [])
-                            errors   = result.get("errors", {})
-                            if expenses and not errors:
-                                st.session_state.splitwise_sent = True
-                                st.rerun()
-                            else:
-                                st.error(f"Splitwise error: {result}")
-                        except Exception as e:
-                            st.error(f"Failed: {e}")
-            else:
-                st.success(f"✅ '{expense_name}' added to Splitwise! {payer} paid £{grand/100:.2f}.")
-                if not st.session_state.get("balloons_shown"):
-                    st.session_state.balloons_shown = True
-                    st.balloons()
-                st.divider()
-                if st.button("🛒 Start a New Receipt", type="primary", use_container_width=True):
-                    for key in list(st.session_state.keys()):
-                        del st.session_state[key]
+            st.markdown("**➕ Add missing item**")
+            c1, c2, c3 = st.columns([3, 2, 1])
+            new_name  = c1.text_input("Item name", label_visibility="collapsed", placeholder="Item name")
+            new_price = c2.number_input("Price", min_value=0.0, step=0.01, label_visibility="collapsed")
+            if c3.button("Add"):
+                if new_name:
+                    new_id = str(uuid.uuid4())
+                    st.session_state.receipt_items.append({
+                        "id": new_id, "name": new_name, "friendly_name": new_name,
+                        "price": new_price, "confidence": 1.0
+                    })
+                    st.session_state.assignments[new_id] = PEOPLE[:]
                     st.rerun()
+                else:
+                    st.warning("Enter an item name.")
 
-        st.divider()
-        if st.button("← Back to Split", use_container_width=True):
-            st.session_state.step = 2
-            st.rerun()
+            st.divider()
+            if st.button("Next → Split Items", type="primary", use_container_width=True):
+                st.session_state.step = 2
+                st.rerun()
+
+        # ---- STEP 2: Split ----
+        elif st.session_state.step == 2:
+            st.caption("Everyone is in by default — remove people from items they didn't share.")
+
+            for item in st.session_state.receipt_items:
+                toggle_key = f"toggle_{item['id']}"
+                if toggle_key not in st.session_state:
+                    st.session_state[toggle_key] = {p: True for p in PEOPLE}
+
+            unassigned = sum(
+                1 for item in st.session_state.receipt_items
+                if not any(st.session_state.get(f"toggle_{item['id']}", {p: True for p in PEOPLE}).values())
+            )
+            if unassigned > 0:
+                st.warning(f"⚠️ {unassigned} item(s) have nobody assigned — they won't be included in the split.")
+
+            @st.fragment
+            def render_item_toggle(item):
+                item_id       = item["id"]
+                conf          = float(item.get("confidence", 1.0))
+                cleared_items = st.session_state.get("cleared_items", set())
+                conf_badge    = " ⚠️" if conf < 0.75 and item_id not in cleared_items else ""
+                display_name  = item.get("friendly_name", item["name"])
+                toggle_key    = f"toggle_{item_id}"
+
+                cols = st.columns([3, 1, 1, 1])
+                cols[0].markdown(
+                    f"**{display_name}{conf_badge}** &nbsp; £{float(item['price']):.2f}",
+                    unsafe_allow_html=True
+                )
+                for i, person in enumerate(PEOPLE):
+                    is_on    = st.session_state[toggle_key][person]
+                    label    = f"{'✓ ' if is_on else ''}{person}"
+                    btn_type = "primary" if is_on else "secondary"
+                    if cols[i + 1].button(label, key=f"tog_{item_id}_{person}", type=btn_type, use_container_width=True):
+                        st.session_state[toggle_key][person] = not is_on
+                        st.session_state.assignments[item_id] = [
+                            p for p in PEOPLE if st.session_state[toggle_key][p]
+                        ]
+                        st.rerun()
+                st.session_state.assignments[item_id] = [
+                    p for p in PEOPLE if st.session_state[toggle_key][p]
+                ]
+
+            for item in st.session_state.receipt_items:
+                render_item_toggle(item)
+
+            st.divider()
+            nav = st.columns(2)
+            if nav[0].button("← Back to Review", use_container_width=True):
+                st.session_state.step = 1
+                st.rerun()
+            if nav[1].button("Next → Finalise", type="primary", use_container_width=True):
+                st.session_state.step = 3
+                st.rerun()
+
+        # ---- STEP 3: Finalise ----
+        elif st.session_state.step == 3:
+
+            discount_parts = []
+            if colleague_discount > 0:
+                discount_parts.append(f"{colleague_discount:.0f}% colleague discount")
+            if extra_discount > 0:
+                discount_parts.append(f"{extra_discount:.0f}% extra discount")
+            if discount_parts:
+                st.info(f"🏷️ {' + '.join(discount_parts)} will be applied to the totals below.")
+
+            st.subheader("Who paid today?")
+            st.caption("Select the person who physically paid at the till — Splitwise will work out what everyone owes them.")
+            payer = st.radio("Payer", PEOPLE, horizontal=True, label_visibility="collapsed")
+
+            already_calculated = "final_totals" in st.session_state
+            discount_changed = (
+                already_calculated and (
+                    colleague_discount != st.session_state.get("calculated_colleague") or
+                    extra_discount     != st.session_state.get("calculated_extra")
+                )
+            )
+            payer_changed = already_calculated and payer != st.session_state.get("calculated_payer")
+            needs_recalc  = payer_changed or discount_changed
+
+            if payer_changed:
+                st.warning("⚠️ Payer has changed — hit Recalculate to update the totals.")
+            if discount_changed:
+                st.warning("⚠️ Discount has changed — hit Recalculate to update the totals.")
+
+            btn_label = "🔄 Recalculate Split" if needs_recalc else "Calculate Split"
+            if st.button(btn_label, type="primary", use_container_width=True):
+                exact_totals = {p: 0.0 for p in PEOPLE}
+                for item in st.session_state.receipt_items:
+                    item_id = item["id"]
+                    split   = st.session_state.assignments.get(item_id, [])
+                    if not split:
+                        continue
+                    price = discounted_price(float(item["price"]), colleague_discount, extra_discount)
+                    share = price / len(split)
+                    for person in split:
+                        exact_totals[person] += share
+                final_totals = {p: round(v * 100) for p, v in exact_totals.items()}
+                st.session_state.final_totals         = final_totals
+                st.session_state.payer                = payer
+                st.session_state.calculated_payer     = payer
+                st.session_state.calculated_colleague = colleague_discount
+                st.session_state.calculated_extra     = extra_discount
+                st.session_state.splitwise_sent       = False
+                st.session_state.balloons_shown       = False
+
+            if "final_totals" in st.session_state:
+                final_totals = st.session_state.final_totals
+                payer        = st.session_state.payer
+                grand        = sum(final_totals.values())
+
+                st.divider()
+                cols = st.columns(len(PEOPLE))
+                for col, person in zip(cols, PEOPLE):
+                    col.metric(label=person, value=f"£{final_totals[person] / 100:.2f}")
+                st.metric(label="🧾 Grand Total", value=f"£{grand / 100:.2f}")
+
+                st.divider()
+                st.subheader("📲 Send to Splitwise")
+                expense_name = st.text_input("Expense name", value="Sainsbury's")
+
+                st.markdown(f"**💳 Paid by: {payer} (£{grand/100:.2f} total)**")
+                for person in PEOPLE:
+                    owed = f"£{final_totals[person] / 100:.2f}"
+                    detail = f"{owed} (paid — keeps this)" if person == payer else f"{owed} (owes {payer})"
+                    c1, c2 = st.columns([2, 3])
+                    c1.markdown(f"**{person}**")
+                    c2.markdown(detail)
+                st.divider()
+
+                if not st.session_state.get("splitwise_sent"):
+                    if st.button("➕ Create Splitwise Expense", type="primary", use_container_width=True):
+                        with st.spinner("Sending to Splitwise..."):
+                            try:
+                                result   = create_splitwise_expense(expense_name, grand, payer, final_totals)
+                                expenses = result.get("expenses", [])
+                                errors   = result.get("errors", {})
+                                if expenses and not errors:
+                                    st.session_state.splitwise_sent = True
+                                    st.rerun()
+                                else:
+                                    st.error(f"Splitwise error: {result}")
+                            except Exception as e:
+                                st.error(f"Failed: {e}")
+                else:
+                    st.success(f"✅ '{expense_name}' added to Splitwise! {payer} paid £{grand/100:.2f}.")
+                    if not st.session_state.get("balloons_shown"):
+                        st.session_state.balloons_shown = True
+                        st.balloons()
+                    st.divider()
+                    if st.button("🛒 Start a New Receipt", type="primary", use_container_width=True):
+                        for key in list(st.session_state.keys()):
+                            del st.session_state[key]
+                        st.rerun()
+
+            st.divider()
+            if st.button("← Back to Split", use_container_width=True):
+                st.session_state.step = 2
+                st.rerun()
